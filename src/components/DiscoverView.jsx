@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Search, UserPlus, UserCheck, Flame, Trophy, AlertCircle } from 'lucide-react';
+import { Search, UserPlus, UserCheck, Flame, Trophy } from 'lucide-react';
 import { useAuth } from '../lib/AuthContext';
-import { supabase } from '../lib/supabase';
+import { pb } from '../lib/pocketbase';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 
 export const DiscoverView = ({ onSelectPlayer }) => {
@@ -11,36 +11,26 @@ export const DiscoverView = ({ onSelectPlayer }) => {
   const [followingMap, setFollowingMap] = useState({});
   const [loading, setLoading] = useState(true);
 
-  // Fetch real players and real follow relationships from Supabase
+  // Fetch real users and follow states from PocketBase
   useEffect(() => {
     const fetchPlayers = async () => {
       setLoading(true);
       try {
-        let query = supabase.from('profiles').select('*').limit(30);
-        if (user?.id) {
-          query = query.neq('id', user.id);
-        }
-        const { data: profilesData } = await query;
-
-        if (profilesData) {
-          setPlayers(profilesData);
-        } else {
-          setPlayers([]);
-        }
+        const records = await pb.collection('users').getList(1, 30, {
+          filter: user?.id ? `id != "${user.id}"` : '',
+          sort: '-follower_count',
+        });
+        setPlayers(records.items || []);
 
         if (user?.id) {
-          const { data: followsData } = await supabase
-            .from('follows')
-            .select('following_id')
-            .eq('follower_id', user.id);
-
-          if (followsData) {
-            const followStatus = {};
-            followsData.forEach((f) => {
-              followStatus[f.following_id] = true;
-            });
-            setFollowingMap(followStatus);
-          }
+          const follows = await pb.collection('follows').getFullList({
+            filter: `follower = "${user.id}"`,
+          });
+          const followStatus = {};
+          follows.forEach((f) => {
+            followStatus[f.following] = true;
+          });
+          setFollowingMap(followStatus);
         }
       } catch (err) {
         console.error('Discover players fetch error:', err);
@@ -70,16 +60,29 @@ export const DiscoverView = ({ onSelectPlayer }) => {
       [playerId]: nextState,
     }));
 
-    if (nextState) {
-      await supabase.from('follows').insert({ follower_id: user.id, following_id: playerId });
-    } else {
-      await supabase.from('follows').delete().match({ follower_id: user.id, following_id: playerId });
+    try {
+      if (nextState) {
+        await pb.collection('follows').create({ follower: user.id, following: playerId });
+        await pb.collection('users').update(playerId, { 'follower_count+': 1 });
+        await pb.collection('users').update(user.id, { 'following_count+': 1 });
+      } else {
+        const record = await pb.collection('follows').getFirstListItem(
+          `follower = "${user.id}" && following = "${playerId}"`
+        );
+        if (record) {
+          await pb.collection('follows').delete(record.id);
+          await pb.collection('users').update(playerId, { 'follower_count-': 1 });
+          await pb.collection('users').update(user.id, { 'following_count-': 1 });
+        }
+      }
+    } catch (e) {
+      console.error('Follow toggle error:', e);
     }
   };
 
   const filteredPlayers = players.filter(
     (p) =>
-      p.display_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      p.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       p.username?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       p.fortnite_username?.toLowerCase().includes(searchQuery.toLowerCase())
   );
@@ -136,7 +139,7 @@ export const DiscoverView = ({ onSelectPlayer }) => {
         ) : filteredPlayers.length === 0 ? (
           <div className="card" style={{ textAlign: 'center', padding: '2.5rem 1rem', color: 'var(--text-muted)' }}>
             {players.length === 0
-              ? 'No other players registered yet. Invite your friends to join!'
+              ? 'No other players registered yet. Be the first to invite friends!'
               : 'No players found matching your search.'}
           </div>
         ) : (
@@ -153,7 +156,7 @@ export const DiscoverView = ({ onSelectPlayer }) => {
                     />
                     <div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontWeight: '800', fontSize: '0.95rem' }}>
-                        {player.display_name}
+                        {player.name || player.username || 'Gamer'}
                         {player.is_verified && <span className="verified-icon">✓</span>}
                       </div>
                       <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>

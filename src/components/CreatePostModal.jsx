@@ -1,18 +1,16 @@
 import React, { useState, useRef } from 'react';
-import { Image, Video, Sparkles, X, UploadCloud, AlertCircle } from 'lucide-react';
+import { Sparkles, X, UploadCloud, AlertCircle } from 'lucide-react';
 import { useAuth } from '../lib/AuthContext';
-import { supabase } from '../lib/supabase';
-import { uploadMediaToSupabase } from '../lib/storage';
+import { pb } from '../lib/pocketbase';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 
 export const CreatePostModal = ({ isOpen, onClose, onPostCreated }) => {
-  const { user, profile } = useAuth();
+  const { user } = useAuth();
   const [content, setContent] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState('');
   const [mediaType, setMediaType] = useState('none');
   const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState('');
 
   const fileInputRef = useRef(null);
@@ -57,38 +55,24 @@ export const CreatePostModal = ({ isOpen, onClose, onPostCreated }) => {
     setErrorMsg('');
 
     try {
-      let finalMediaUrl = '';
+      const formData = new FormData();
+      formData.append('user', user.id);
+      formData.append('content', content.trim());
+      formData.append('media_type', selectedFile ? mediaType : 'none');
+      formData.append('like_count', 0);
+      formData.append('comment_count', 0);
+      formData.append('share_count', 0);
 
       if (selectedFile) {
-        setUploadProgress(30);
-        const { url, error } = await uploadMediaToSupabase(selectedFile, 'posts', user.id);
-        if (error) {
-          throw new Error('Media upload failed: ' + error.message);
-        }
-        finalMediaUrl = url;
-        setUploadProgress(70);
+        formData.append('media', selectedFile);
       }
 
-      const postData = {
-        user_id: user.id,
-        content: content.trim(),
-        media_type: selectedFile ? mediaType : 'none',
-        media_url: finalMediaUrl,
-        like_count: 0,
-        comment_count: 0,
-        share_count: 0,
-      };
+      const record = await pb.collection('posts').create(formData, {
+        expand: 'user',
+      });
 
-      const { data, error } = await supabase
-        .from('posts')
-        .insert(postData)
-        .select('*, author:profiles(*)')
-        .single();
-
-      if (error) throw error;
-
-      if (onPostCreated && data) {
-        onPostCreated(data);
+      if (onPostCreated) {
+        onPostCreated(record);
       }
 
       triggerHaptic();
@@ -96,11 +80,10 @@ export const CreatePostModal = ({ isOpen, onClose, onPostCreated }) => {
       handleRemoveFile();
       onClose();
     } catch (err) {
-      console.error('Post creation error:', err);
-      setErrorMsg(err.message || 'Failed to publish post.');
+      console.error('Post creation error in PocketBase:', err);
+      setErrorMsg(err.message || 'Failed to publish post to PocketBase.');
     } finally {
       setUploading(false);
-      setUploadProgress(0);
     }
   };
 
@@ -194,21 +177,8 @@ export const CreatePostModal = ({ isOpen, onClose, onPostCreated }) => {
                 Tap to Pick Photo or Gameplay Clip
               </span>
               <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                PNG, JPG, MP4, MOV up to 50MB
+                Directly stored in PocketBase
               </span>
-            </div>
-          )}
-
-          {uploading && (
-            <div style={{ width: '100%', background: 'var(--bg-input)', borderRadius: '8px', height: '6px', overflow: 'hidden' }}>
-              <div
-                style={{
-                  width: `${uploadProgress || 50}%`,
-                  height: '100%',
-                  background: 'var(--gradient-storm)',
-                  transition: 'width 0.3s ease',
-                }}
-              />
             </div>
           )}
 
@@ -217,7 +187,7 @@ export const CreatePostModal = ({ isOpen, onClose, onPostCreated }) => {
               {content.length}/1000 characters
             </span>
             <button type="submit" className="btn btn-primary" disabled={!content.trim() || uploading}>
-              {uploading ? 'Uploading to Supabase...' : 'Post to Feed ⚡'}
+              {uploading ? 'Uploading...' : 'Post to Feed ⚡'}
             </button>
           </div>
         </form>

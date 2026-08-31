@@ -1,44 +1,28 @@
-import { supabase, isSupabaseConfigured } from './supabase';
+import { pb } from './pocketbase';
 
 /**
- * Upload a local file (Image or Video) directly to Supabase Storage
- * @param {File | Blob} file - The file object from native picker or file input
- * @param {string} bucket - 'posts', 'avatars', or 'banners'
- * @param {string} userId - Auth user UUID
- * @returns {Promise<{ url: string, type: 'image' | 'video', error: Error | null }>}
+ * Upload a local file (Image or Video) to a PocketBase collection record
+ * PocketBase serves files directly via:
+ * `${pb.baseUrl}/api/files/${record.collectionId}/${record.id}/${record.media}`
  */
-export async function uploadMediaToSupabase(file, bucket = 'posts', userId) {
+export async function uploadMediaToPocketBase(file, collectionName = 'posts', recordId) {
   if (!file) return { url: null, type: 'none', error: new Error('No file provided') };
 
   const isVideo = file.type.startsWith('video');
-  const fileExt = file.name ? file.name.split('.').pop() : isVideo ? 'mp4' : 'jpg';
-  const filePath = `${userId}/${Date.now()}_${Math.random().toString(36).substring(2, 9)}.${fileExt}`;
+  const formData = new FormData();
+  formData.append('media', file);
 
-  if (!isSupabaseConfigured()) {
-    // Return object URL for local offline testing if keys not set
-    const objectUrl = URL.createObjectURL(file);
-    return { url: objectUrl, type: isVideo ? 'video' : 'image', error: null };
-  }
+  try {
+    const updatedRecord = await pb.collection(collectionName).update(recordId, formData);
+    const fileUrl = pb.files.getUrl(updatedRecord, updatedRecord.media);
 
-  const { data, error } = await supabase.storage
-    .from(bucket)
-    .upload(filePath, file, {
-      cacheControl: '3600',
-      upsert: false,
-    });
-
-  if (error) {
-    console.error('Supabase Storage upload error:', error);
+    return {
+      url: fileUrl,
+      type: isVideo ? 'video' : 'image',
+      error: null,
+    };
+  } catch (error) {
+    console.error('PocketBase Storage upload error:', error);
     return { url: null, type: isVideo ? 'video' : 'image', error };
   }
-
-  const { data: publicUrlData } = supabase.storage
-    .from(bucket)
-    .getPublicUrl(data.path);
-
-  return {
-    url: publicUrlData.publicUrl,
-    type: isVideo ? 'video' : 'image',
-    error: null,
-  };
 }

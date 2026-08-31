@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Home, Compass, PlusSquare, Bell, User, MessageSquare, ShieldAlert, Sparkles, Shield, Lock } from 'lucide-react';
 import { useAuth } from './lib/AuthContext';
-import { supabase } from './lib/supabase';
+import { pb } from './lib/pocketbase';
 import { PostCard } from './components/PostCard';
 import { CreatePostModal } from './components/CreatePostModal';
 import { DiscoverView } from './components/DiscoverView';
@@ -13,7 +13,7 @@ import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import './index.css';
 
 function App() {
-  const { user, profile, loading } = useAuth();
+  const { user, loading } = useAuth();
 
   // Tab State
   const [activeTab, setActiveTab] = useState('feed'); // 'feed', 'discover', 'create', 'notifications', 'profile', 'dms'
@@ -26,60 +26,58 @@ function App() {
   const [eulaModalOpen, setEulaModalOpen] = useState(false);
   const [privacyModalOpen, setPrivacyModalOpen] = useState(false);
 
-  // Fetch real posts from Supabase database
+  // Fetch real posts from PocketBase
   const loadPosts = async () => {
     setFetchingPosts(true);
     try {
-      const { data, error } = await supabase
-        .from('posts')
-        .select('*, author:profiles(*)')
-        .order('created_at', { ascending: false });
-
-      if (!error && data) {
-        setPosts(data);
-      } else {
-        setPosts([]);
-      }
+      const records = await pb.collection('posts').getList(1, 50, {
+        sort: '-created',
+        expand: 'user',
+      });
+      setPosts(records.items || []);
     } catch (err) {
-      console.error('Failed to load posts from Supabase:', err);
+      console.warn('PocketBase posts fetch note:', err.message);
       setPosts([]);
     } finally {
       setFetchingPosts(false);
     }
   };
 
-  // Fetch real notifications and real blocked users
   useEffect(() => {
     if (user?.id) {
       loadPosts();
 
-      // Load blocked users from Supabase
-      supabase
-        .from('blocks')
-        .select('blocked_id, blocked:profiles!blocked_id(*)')
-        .eq('blocker_id', user.id)
-        .then(({ data }) => {
-          if (data) {
-            setBlockedUsers(
-              data.map((b) => ({
-                id: b.blocked_id,
-                name: b.blocked?.display_name || b.blocked?.username || 'User',
-              }))
-            );
-          }
-        });
+      // Load blocked users
+      pb.collection('blocks')
+        .getList(1, 50, { filter: `blocker = "${user.id}"`, expand: 'blocked' })
+        .then((res) => {
+          setBlockedUsers(
+            res.items.map((b) => ({
+              id: b.blocked,
+              name: b.expand?.blocked?.name || b.expand?.blocked?.username || 'User',
+            }))
+          );
+        })
+        .catch(() => {});
 
-      // Load real notifications
-      supabase
-        .from('notifications')
-        .select('*, actor:profiles!actor_id(*)')
-        .eq('recipient_id', user.id)
-        .order('created_at', { ascending: false })
-        .then(({ data }) => {
-          if (data) {
-            setNotifications(data);
-          }
-        });
+      // Load notifications
+      pb.collection('notifications')
+        .getList(1, 50, { filter: `recipient = "${user.id}"`, sort: '-created', expand: 'actor' })
+        .then((res) => setNotifications(res.items))
+        .catch(() => {});
+
+      // Realtime subscription for posts
+      pb.collection('posts').subscribe('*', (e) => {
+        if (e.action === 'create') {
+          setPosts((prev) => [e.record, ...prev]);
+        } else if (e.action === 'delete') {
+          setPosts((prev) => prev.filter((p) => p.id !== e.record.id));
+        }
+      });
+
+      return () => {
+        pb.collection('posts').unsubscribe('*').catch(() => {});
+      };
     }
   }, [user?.id]);
 
@@ -91,7 +89,7 @@ function App() {
 
   // Filter posts from blocked accounts
   const visiblePosts = posts.filter(
-    (p) => !blockedUsers.some((b) => b.id === p.author?.id || b.id === p.user_id)
+    (p) => !blockedUsers.some((b) => b.id === (p.user || p.expand?.user?.id))
   );
 
   const handlePostCreated = (newPost) => {
@@ -101,21 +99,28 @@ function App() {
 
   const handleDeletePost = async (postId) => {
     setPosts((prev) => prev.filter((p) => p.id !== postId));
-    await supabase.from('posts').delete().eq('id', postId);
+    try {
+      await pb.collection('posts').delete(postId);
+    } catch (e) {}
   };
 
   const handleBlockUser = async (userId, userName) => {
     if (!blockedUsers.some((b) => b.id === userId) && user?.id) {
       setBlockedUsers((prev) => [...prev, { id: userId, name: userName }]);
-      await supabase.from('blocks').insert({ blocker_id: user.id, blocked_id: userId });
-      alert(`Blocked @${userName}. Their posts and messages have been hidden.`);
+      try {
+        await pb.collection('blocks').create({ blocker: user.id, blocked: userId });
+      } catch (e) {}
+      alert(`Blocked @${userName}. Content hidden.`);
     }
   };
 
   const handleUnblockUser = async (userId) => {
     if (!user?.id) return;
     setBlockedUsers((prev) => prev.filter((b) => b.id !== userId));
-    await supabase.from('blocks').delete().match({ blocker_id: user.id, blocked_id: userId });
+    try {
+      const record = await pb.collection('blocks').getFirstListItem(`blocker = "${user.id}" && blocked = "${userId}"`);
+      if (record) await pb.collection('blocks').delete(record.id);
+    } catch (e) {}
   };
 
   const switchTab = (tab) => {
@@ -188,7 +193,7 @@ function App() {
               </div>
               <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: '1.6', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                 <p><strong>1. Information We Collect:</strong> We collect only account credentials (email), profile details (username, display name, optional Fortnite IGN, bio), and gaming posts/clips you choose to share.</p>
-                <p><strong>2. Data Usage & Storage:</strong> Data is securely stored using Supabase PostgreSQL with strict Row Level Security. We do not sell user data to third parties.</p>
+                <p><strong>2. Data Usage & Storage:</strong> Data is securely stored using PocketBase with strict security rules. We do not sell user data to third parties.</p>
                 <p><strong>3. Account Deletion:</strong> In compliance with Apple App Store Guideline 5.1.1(v), users can permanently delete their account and all associated data directly within Settings at any time.</p>
               </div>
               <button className="btn btn-primary w-full" style={{ marginTop: '1.25rem' }} onClick={() => setPrivacyModalOpen(false)}>
@@ -224,7 +229,7 @@ function App() {
         <main className="main-content animate-fade">
           <div className="disclaimer-banner">
             <ShieldAlert size={18} color="var(--accent-purple)" style={{ flexShrink: 0 }} />
-            <span>Independent gaming platform. Not affiliated with or endorsed by Epic Games.</span>
+            <span>Independent gaming platform. Powered by PocketBase.</span>
           </div>
 
           {fetchingPosts ? (
@@ -261,7 +266,7 @@ function App() {
       {activeTab === 'profile' && (
         <ProfileView
           onOpenSettings={() => setSettingsModalOpen(true)}
-          userPosts={posts.filter((p) => p.user_id === user.id)}
+          userPosts={posts.filter((p) => (p.user || p.expand?.user?.id) === user.id)}
           onDeletePost={handleDeletePost}
         />
       )}
@@ -286,16 +291,16 @@ function App() {
               notifications.map((n) => (
                 <div key={n.id} className="card" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                   <img
-                    src={n.actor?.avatar_url || `https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${n.actor_id}`}
+                    src={n.expand?.actor?.avatar_url || `https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${n.actor}`}
                     alt=""
                     className="avatar sm"
                   />
                   <div>
                     <p style={{ fontSize: '0.85rem' }}>
-                      <strong>{n.actor?.display_name || 'A player'}</strong> {n.type === 'like' && 'liked your post.'}{n.type === 'comment' && 'commented on your post.'}{n.type === 'follow' && 'started following you.'}
+                      <strong>{n.expand?.actor?.name || 'A player'}</strong> {n.type === 'like' && 'liked your post.'}{n.type === 'comment' && 'commented on your post.'}{n.type === 'follow' && 'started following you.'}
                     </p>
                     <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                      {new Date(n.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                      {new Date(n.created).toLocaleDateString([], { month: 'short', day: 'numeric' })}
                     </span>
                   </div>
                 </div>

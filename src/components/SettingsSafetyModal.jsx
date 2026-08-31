@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
-import { Shield, UserX, Lock, Trash2, ArrowLeft, ExternalLink, HelpCircle, Sparkles } from 'lucide-react';
+import { Shield, UserX, Lock, Trash2, ArrowLeft, ExternalLink, Sparkles } from 'lucide-react';
 import { useAuth } from '../lib/AuthContext';
 
 export const SettingsSafetyModal = ({ isOpen, onClose, onOpenEULA, onOpenPrivacy, blockedUsers = [], onUnblock }) => {
   const { user, profile, updateProfile, deleteAccount, signOut } = useAuth();
-  const [activeSubTab, setActiveSubTab] = useState('menu'); // 'menu', 'edit_profile', 'blocked', 'delete_confirm'
-  const [displayName, setDisplayName] = useState(profile?.display_name || '');
+  const [activeSubTab, setActiveSubTab] = useState('menu');
+  const [displayName, setDisplayName] = useState(profile?.name || '');
   const [fortniteIgn, setFortniteIgn] = useState(profile?.fortnite_username || '');
   const [bio, setBio] = useState(profile?.bio || '');
   const [avatarUrl, setAvatarUrl] = useState(profile?.avatar_url || '');
@@ -17,7 +17,7 @@ export const SettingsSafetyModal = ({ isOpen, onClose, onOpenEULA, onOpenPrivacy
   const handleSaveProfile = (e) => {
     e.preventDefault();
     updateProfile({
-      display_name: displayName,
+      name: displayName,
       fortnite_username: fortniteIgn,
       bio,
       avatar_url: avatarUrl,
@@ -179,7 +179,7 @@ export const SettingsSafetyModal = ({ isOpen, onClose, onOpenEULA, onOpenPrivacy
               <textarea
                 className="input"
                 rows={3}
-                placeholder="Share your Fortnite playstyle and achievements..."
+                placeholder="Share your playstyle and achievements..."
                 value={bio}
                 onChange={(e) => setBio(e.target.value)}
               />
@@ -214,7 +214,7 @@ export const SettingsSafetyModal = ({ isOpen, onClose, onOpenEULA, onOpenPrivacy
                     borderRadius: '12px',
                   }}
                 >
-                  <span style={{ fontWeight: '700', fontSize: '0.9rem' }}>{b.name || b.username || 'User'}</span>
+                  <span style={{ fontWeight: '700', fontSize: '0.9rem' }}>{b.name || 'User'}</span>
                   <button
                     className="btn btn-secondary"
                     style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem', minHeight: '36px' }}
@@ -228,7 +228,7 @@ export const SettingsSafetyModal = ({ isOpen, onClose, onOpenEULA, onOpenPrivacy
           </div>
         )}
 
-        {/* Delete Account (App Store Guideline 5.1.1(v)) */}
+        {/* Delete Account */}
         {activeSubTab === 'delete_confirm' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
             <div style={{ background: 'rgba(255, 59, 48, 0.1)', border: '1px solid var(--accent-red)', padding: '1rem', borderRadius: '12px' }}>
@@ -236,7 +236,7 @@ export const SettingsSafetyModal = ({ isOpen, onClose, onOpenEULA, onOpenPrivacy
                 Irreversible Action
               </h4>
               <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                Deleting your account will immediately and permanently erase your profile, gaming posts, clips, comments, direct messages, and followers in accordance with Apple Privacy guidelines.
+                Deleting your account will immediately erase your profile, gaming posts, clips, comments, and direct messages in accordance with Apple Privacy guidelines.
               </p>
             </div>
 

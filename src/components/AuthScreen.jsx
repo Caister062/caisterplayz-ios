@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Shield, Sparkles, AlertCircle, Database, Check, Key } from 'lucide-react';
+import { Shield, Sparkles, AlertCircle, Server, Check } from 'lucide-react';
 import { useAuth } from '../lib/AuthContext';
-import { isSupabaseConfigured, getStoredSupabaseConfig, setStoredSupabaseConfig, reinitializeSupabase } from '../lib/supabase';
+import { getStoredPocketBaseUrl, reinitializePocketBase } from '../lib/pocketbase';
 
 export const AuthScreen = ({ onOpenEULA, onOpenPrivacy }) => {
   const { signIn, signUp } = useAuth();
@@ -15,23 +15,14 @@ export const AuthScreen = ({ onOpenEULA, onOpenPrivacy }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // Supabase Configuration Setup State
+  // PocketBase Server Config
   const [showConfigModal, setShowConfigModal] = useState(false);
-  const initialConfig = getStoredSupabaseConfig();
-  const [sbUrl, setSbUrl] = useState(initialConfig.url || '');
-  const [sbAnonKey, setSbAnonKey] = useState(initialConfig.key || '');
+  const [pbUrl, setPbUrl] = useState(getStoredPocketBaseUrl());
   const [configSuccess, setConfigSuccess] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
-
-    // Check if Supabase Project is plugged in
-    if (!isSupabaseConfigured()) {
-      setShowConfigModal(true);
-      setError('Please connect your Supabase Project URL and Anon Key to enable live sign in and sign up.');
-      return;
-    }
 
     if (!isLogin && !agreeEula) {
       setError('You must accept the Community Guidelines and EULA to create an account.');
@@ -44,12 +35,7 @@ export const AuthScreen = ({ onOpenEULA, onOpenPrivacy }) => {
       if (isLogin) {
         const { error: signinError } = await signIn(email, password);
         if (signinError) {
-          if (signinError.message === 'Failed to fetch') {
-            setError('Could not connect to Supabase. Please verify your Project URL and Anon Key in Database Settings below.');
-            setShowConfigModal(true);
-          } else {
-            setError(signinError.message || 'Login failed');
-          }
+          setError(signinError.message || 'Login failed. Please verify your credentials or server URL.');
         }
       } else {
         const { error: signupError } = await signUp({
@@ -60,16 +46,11 @@ export const AuthScreen = ({ onOpenEULA, onOpenPrivacy }) => {
           fortniteUsername: fortniteIgn,
         });
         if (signupError) {
-          if (signupError.message === 'Failed to fetch') {
-            setError('Could not connect to Supabase. Please verify your Project URL and Anon Key in Database Settings below.');
-            setShowConfigModal(true);
-          } else {
-            setError(signupError.message || 'Sign up failed');
-          }
+          setError(signupError.message || 'Sign up failed. Please ensure username is unique.');
         }
       }
     } catch (err) {
-      setError(err.message || 'An unexpected connection error occurred.');
+      setError(err.message || 'Connection error.');
     } finally {
       setLoading(false);
     }
@@ -77,10 +58,9 @@ export const AuthScreen = ({ onOpenEULA, onOpenPrivacy }) => {
 
   const handleSaveConfig = (e) => {
     e.preventDefault();
-    if (!sbUrl.trim() || !sbAnonKey.trim()) return;
+    if (!pbUrl.trim()) return;
 
-    setStoredSupabaseConfig(sbUrl.trim(), sbAnonKey.trim());
-    reinitializeSupabase(sbUrl.trim(), sbAnonKey.trim());
+    reinitializePocketBase(pbUrl.trim());
     setConfigSuccess(true);
     setError('');
 
@@ -88,7 +68,7 @@ export const AuthScreen = ({ onOpenEULA, onOpenPrivacy }) => {
       setConfigSuccess(false);
       setShowConfigModal(false);
       window.location.reload();
-    }, 1000);
+    }, 800);
   };
 
   return (
@@ -287,11 +267,11 @@ export const AuthScreen = ({ onOpenEULA, onOpenPrivacy }) => {
           )}
 
           <button type="submit" className="btn btn-primary" style={{ marginTop: '0.5rem' }} disabled={loading}>
-            {loading ? 'Connecting to Supabase...' : isLogin ? 'Drop In ⚡' : 'Join CaisterPlayz'}
+            {loading ? 'Connecting to PocketBase...' : isLogin ? 'Drop In ⚡' : 'Join CaisterPlayz'}
           </button>
         </form>
 
-        {/* Database Credentials Trigger */}
+        {/* PocketBase URL Switcher */}
         <div style={{ marginTop: '1.25rem', borderTop: 'var(--border-subtle)', paddingTop: '0.75rem', textAlign: 'center' }}>
           <button
             type="button"
@@ -299,67 +279,52 @@ export const AuthScreen = ({ onOpenEULA, onOpenPrivacy }) => {
             style={{ width: '100%', fontSize: '0.8rem', padding: '0.5rem', gap: '0.4rem', justifyContent: 'center' }}
             onClick={() => setShowConfigModal(true)}
           >
-            <Database size={15} color="var(--accent-cyan)" /> Connect Supabase Project
+            <Server size={15} color="var(--accent-cyan)" /> PocketBase Server URL
           </button>
         </div>
       </div>
 
-      {/* Supabase Connection Setup Modal */}
+      {/* PocketBase Server URL Modal */}
       {showConfigModal && (
         <div className="modal-overlay" onClick={() => setShowConfigModal(false)}>
           <div className="modal-sheet animate-fade" onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <Database size={20} color="var(--accent-cyan)" />
-                <h3 style={{ fontSize: '1.15rem', fontWeight: '800' }}>Supabase Project Setup</h3>
+                <Server size={20} color="var(--accent-cyan)" />
+                <h3 style={{ fontSize: '1.15rem', fontWeight: '800' }}>PocketBase Endpoint</h3>
               </div>
               <button className="icon-btn" onClick={() => setShowConfigModal(false)} style={{ width: '32px', height: '32px' }}>
                 ×
               </button>
             </div>
 
-            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem', lineHeight: '1.5' }}>
-              Enter your real <strong>Supabase Project URL</strong> and <strong>Anon Public API Key</strong> from your Supabase Dashboard (<a href="https://supabase.com/dashboard" target="_blank" rel="noreferrer" style={{ color: 'var(--accent-cyan)' }}>Project Settings &gt; API</a>).
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+              Specify your self-hosted PocketBase instance or PocketHost.io URL:
             </p>
 
             <form onSubmit={handleSaveConfig} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
                 <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '0.25rem' }}>
-                  Project URL
+                  PocketBase Server URL
                 </label>
                 <input
                   type="url"
                   className="input"
-                  placeholder="https://xyzcompany.supabase.co"
-                  value={sbUrl}
-                  onChange={(e) => setSbUrl(e.target.value)}
+                  placeholder="https://caisterplayz.pockethost.io or http://127.0.0.1:8090"
+                  value={pbUrl}
+                  onChange={(e) => setPbUrl(e.target.value)}
                   required
-                />
-              </div>
-
-              <div>
-                <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '0.25rem' }}>
-                  Project API Anon / Public Key
-                </label>
-                <textarea
-                  className="input"
-                  rows={3}
-                  placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-                  value={sbAnonKey}
-                  onChange={(e) => setSbAnonKey(e.target.value)}
-                  required
-                  style={{ minHeight: '70px', fontSize: '0.8rem', wordBreak: 'break-all' }}
                 />
               </div>
 
               {configSuccess && (
                 <div style={{ background: 'rgba(16, 185, 129, 0.2)', border: '1px solid var(--accent-green)', padding: '0.65rem', borderRadius: '8px', color: 'var(--accent-green)', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                  <Check size={16} /> Supabase project connected successfully!
+                  <Check size={16} /> Server updated!
                 </div>
               )}
 
               <button type="submit" className="btn btn-primary" style={{ marginTop: '0.5rem' }}>
-                Save & Connect Supabase
+                Save & Connect
               </button>
             </form>
           </div>

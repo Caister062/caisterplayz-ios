@@ -1,168 +1,104 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { supabase, isSupabaseConfigured } from './supabase';
+import { pb } from './pocketbase';
 
 const AuthContext = createContext(null);
 
 export const useAuth = () => useContext(AuthContext);
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null);
-  const [profile, setProfile] = useState(null);
+  const [user, setUser] = useState(pb.authStore.model);
+  const [profile, setProfile] = useState(pb.authStore.model);
   const [loading, setLoading] = useState(true);
-  const [isConfigured] = useState(isSupabaseConfigured());
-
-  // Fetch real profile from Supabase Database
-  const fetchProfile = async (userId) => {
-    if (!userId) return;
-
-    try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .maybeSingle();
-
-      if (data) {
-        setProfile(data);
-      } else {
-        // Build profile from auth user metadata if database trigger hasn't completed yet
-        const { data: { user: authUser } } = await supabase.auth.getUser();
-        if (authUser) {
-          const fallbackProfile = {
-            id: authUser.id,
-            username: authUser.user_metadata?.username || 'player',
-            display_name: authUser.user_metadata?.display_name || 'Gamer',
-            fortnite_username: authUser.user_metadata?.fortnite_username || '',
-            avatar_url: authUser.user_metadata?.avatar_url || `https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${authUser.id}`,
-            banner_url: authUser.user_metadata?.banner_url || '',
-            bio: authUser.user_metadata?.bio || '',
-            is_verified: false,
-            follower_count: 0,
-            following_count: 0,
-          };
-          setProfile(fallbackProfile);
-        }
-      }
-    } catch (err) {
-      console.error('Error fetching profile:', err);
-    }
-  };
 
   useEffect(() => {
-    const initAuth = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user) {
-          setUser(session.user);
-          await fetchProfile(session.user.id);
-        } else {
-          setUser(null);
-          setProfile(null);
-        }
-      } catch (err) {
-        console.error('Auth initialization error:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    initAuth();
-
-    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (session?.user) {
-        setUser(session.user);
-        await fetchProfile(session.user.id);
-      } else {
-        setUser(null);
-        setProfile(null);
-      }
-      setLoading(false);
+    // Listen to PocketBase auth state changes
+    const unsubscribe = pb.authStore.onChange((token, model) => {
+      setUser(model);
+      setProfile(model);
     });
 
+    if (pb.authStore.isValid && pb.authStore.model) {
+      setUser(pb.authStore.model);
+      setProfile(pb.authStore.model);
+    }
+    setLoading(false);
+
     return () => {
-      authListener?.subscription?.unsubscribe();
+      unsubscribe();
     };
   }, []);
 
-  // Real Sign Up with Supabase Auth
+  // PocketBase Sign Up
   const signUp = async ({ email, password, username, displayName, fortniteUsername }) => {
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          username: username.toLowerCase().trim(),
-          display_name: displayName?.trim() || username.trim(),
-          fortnite_username: fortniteUsername?.trim() || '',
-          avatar_url: `https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${username.trim()}`,
-        },
-      },
-    });
+    try {
+      const data = {
+        username: username.toLowerCase().trim(),
+        email: email.trim(),
+        emailVisibility: true,
+        password: password,
+        passwordConfirm: password,
+        name: displayName?.trim() || username.trim(),
+        fortnite_username: fortniteUsername?.trim() || '',
+        avatar_url: `https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${username.trim()}`,
+        follower_count: 0,
+        following_count: 0,
+      };
 
-    if (error) {
+      const record = await pb.collection('users').create(data);
+
+      // Log in immediately following registration
+      const authData = await pb.collection('users').authWithPassword(email.trim(), password);
+      setUser(authData.record);
+      setProfile(authData.record);
+
+      return { user: authData.record, error: null };
+    } catch (error) {
+      console.error('PocketBase sign up error:', error);
       return { user: null, error };
     }
-
-    if (data?.user) {
-      setUser(data.user);
-      await fetchProfile(data.user.id);
-    }
-    return { user: data?.user, error: null };
   };
 
-  // Real Sign In with Supabase Auth
+  // PocketBase Sign In
   const signIn = async (email, password) => {
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-
-    if (error) {
+    try {
+      const authData = await pb.collection('users').authWithPassword(email.trim(), password);
+      setUser(authData.record);
+      setProfile(authData.record);
+      return { user: authData.record, error: null };
+    } catch (error) {
+      console.error('PocketBase sign in error:', error);
       return { user: null, error };
     }
-
-    if (data?.user) {
-      setUser(data.user);
-      await fetchProfile(data.user.id);
-    }
-    return { user: data?.user, error: null };
   };
 
-  // Real Sign Out
-  const signOut = async () => {
-    await supabase.auth.signOut();
+  // PocketBase Sign Out
+  const signOut = () => {
+    pb.authStore.clear();
     setUser(null);
     setProfile(null);
   };
 
-  // Real Profile Update in Supabase
+  // Profile Update
   const updateProfile = async (updates) => {
-    if (!user) return;
-    const newProfile = { ...profile, ...updates, updated_at: new Date().toISOString() };
-    setProfile(newProfile);
-
+    if (!user?.id) return;
     try {
-      await supabase.from('profiles').update(updates).eq('id', user.id);
-      await supabase.auth.updateUser({
-        data: updates,
-      });
+      const updatedRecord = await pb.collection('users').update(user.id, updates);
+      setUser(updatedRecord);
+      setProfile(updatedRecord);
     } catch (e) {
       console.error('Failed to update profile:', e);
     }
   };
 
-  // Real Permanent Account Deletion (Apple Guideline 5.1.1(v))
+  // Permanent Account Deletion (Apple Guideline 5.1.1(v))
   const deleteAccount = async () => {
-    if (!user) return;
+    if (!user?.id) return;
     try {
-      // Delete user's profile and cascade all related posts, comments, likes, messages
-      await supabase.from('profiles').delete().eq('id', user.id);
-      await supabase.auth.signOut();
+      await pb.collection('users').delete(user.id);
+      signOut();
     } catch (e) {
       console.error('Failed to delete account:', e);
     }
-    setUser(null);
-    setProfile(null);
   };
 
   return (
@@ -171,7 +107,6 @@ export const AuthProvider = ({ children }) => {
         user,
         profile,
         loading,
-        isConfigured,
         signUp,
         signIn,
         signOut,

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Heart, MessageCircle, Share2, MoreHorizontal, Flag, UserX, Trash2 } from 'lucide-react';
 import { useAuth } from '../lib/AuthContext';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { pb } from '../lib/pocketbase';
 import { ReportModal } from './ReportModal';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { Share } from '@capacitor/share';
@@ -17,42 +17,41 @@ export const PostCard = ({ post, onLikeToggle, onDelete, onBlockUser }) => {
   const [commentCount, setCommentCount] = useState(post.comment_count || 0);
   const [reportOpen, setReportOpen] = useState(false);
 
-  const isAuthor = user?.id === post.user_id;
+  const author = post.expand?.user || post.author || {};
+  const isAuthor = user?.id === (post.user || post.user_id);
 
-  // Load real comments & like state from Supabase
+  // Compute media URL from PocketBase record or direct link
+  const mediaUrl = post.media
+    ? pb.files.getUrl(post, post.media)
+    : post.media_url || '';
+
   useEffect(() => {
-    const fetchPostDetails = async () => {
-      if (!isSupabaseConfigured()) {
-        setComments(post.comments || []);
-        setIsLiked(post.is_liked || false);
-        return;
-      }
+    const fetchCommentsAndLikes = async () => {
+      if (!post.id) return;
 
-      // Check if current user liked this post
-      if (user?.id) {
-        const { data: likeData } = await supabase
-          .from('likes')
-          .select('id')
-          .match({ user_id: user.id, post_id: post.id })
-          .maybeSingle();
+      try {
+        // Fetch comments from PocketBase
+        const commRecords = await pb.collection('comments').getList(1, 50, {
+          filter: `post = "${post.id}"`,
+          sort: 'created',
+          expand: 'user',
+        });
+        setComments(commRecords.items);
+        setCommentCount(commRecords.totalItems);
 
-        setIsLiked(!!likeData);
-      }
-
-      // Fetch latest comments
-      const { data: commentsData } = await supabase
-        .from('comments')
-        .select('*, author:profiles(*)')
-        .eq('post_id', post.id)
-        .order('created_at', { ascending: true });
-
-      if (commentsData) {
-        setComments(commentsData);
-        setCommentCount(commentsData.length);
+        // Check if user liked post
+        if (user?.id) {
+          const likeRecord = await pb.collection('likes').getFirstListItem(
+            `post = "${post.id}" && user = "${user.id}"`
+          ).catch(() => null);
+          setIsLiked(!!likeRecord);
+        }
+      } catch (err) {
+        // Safe catch if collections are empty
       }
     };
 
-    fetchPostDetails();
+    fetchCommentsAndLikes();
   }, [post.id, user?.id]);
 
   const triggerHaptic = async (style = ImpactStyle.Light) => {
@@ -62,61 +61,54 @@ export const PostCard = ({ post, onLikeToggle, onDelete, onBlockUser }) => {
   };
 
   const handleLike = async () => {
+    if (!user?.id) return;
     triggerHaptic(ImpactStyle.Medium);
+
     const nextState = !isLiked;
     setIsLiked(nextState);
     setLikeCount((prev) => (nextState ? prev + 1 : Math.max(prev - 1, 0)));
 
-    if (onLikeToggle) onLikeToggle(post.id, nextState);
-
-    if (isSupabaseConfigured() && user?.id) {
+    try {
       if (nextState) {
-        await supabase.from('likes').insert({ user_id: user.id, post_id: post.id });
+        await pb.collection('likes').create({ post: post.id, user: user.id });
+        await pb.collection('posts').update(post.id, { 'like_count+': 1 });
       } else {
-        await supabase.from('likes').delete().match({ user_id: user.id, post_id: post.id });
+        const likeRecord = await pb.collection('likes').getFirstListItem(
+          `post = "${post.id}" && user = "${user.id}"`
+        ).catch(() => null);
+        if (likeRecord) {
+          await pb.collection('likes').delete(likeRecord.id);
+          await pb.collection('posts').update(post.id, { 'like_count-': 1 });
+        }
       }
+    } catch (e) {
+      console.error('Like error:', e);
     }
   };
 
   const handleAddComment = async (e) => {
     e.preventDefault();
-    if (!newComment.trim()) return;
+    if (!newComment.trim() || !user?.id) return;
 
     triggerHaptic();
-
-    const commentText = newComment.trim();
+    const content = newComment.trim();
     setNewComment('');
 
-    if (isSupabaseConfigured() && user?.id) {
-      const { data, error } = await supabase
-        .from('comments')
-        .insert({
-          post_id: post.id,
-          user_id: user.id,
-          content: commentText,
-        })
-        .select('*, author:profiles(*)')
-        .single();
-
-      if (data) {
-        setComments((prev) => [...prev, data]);
-        setCommentCount((prev) => prev + 1);
-      }
-    } else {
-      const localComm = {
-        id: `comm_${Date.now()}`,
-        post_id: post.id,
-        user_id: user?.id,
-        content: commentText,
-        created_at: new Date().toISOString(),
-        author: {
-          display_name: user?.user_metadata?.display_name || 'You',
-          username: user?.user_metadata?.username || 'player',
-          avatar_url: user?.user_metadata?.avatar_url || 'https://api.dicebear.com/7.x/bottts-neutral/svg?seed=user',
+    try {
+      const record = await pb.collection('comments').create(
+        {
+          post: post.id,
+          user: user.id,
+          content,
         },
-      };
-      setComments((prev) => [...prev, localComm]);
+        { expand: 'user' }
+      );
+
+      setComments((prev) => [...prev, record]);
       setCommentCount((prev) => prev + 1);
+      await pb.collection('posts').update(post.id, { 'comment_count+': 1 });
+    } catch (err) {
+      console.error('Comment submission error:', err);
     }
   };
 
@@ -125,32 +117,32 @@ export const PostCard = ({ post, onLikeToggle, onDelete, onBlockUser }) => {
     setComments((prev) => prev.filter((c) => c.id !== commentId));
     setCommentCount((prev) => Math.max(prev - 1, 0));
 
-    if (isSupabaseConfigured()) {
-      await supabase.from('comments').delete().eq('id', commentId);
-    }
+    try {
+      await pb.collection('comments').delete(commentId);
+      await pb.collection('posts').update(post.id, { 'comment_count-': 1 });
+    } catch (e) {}
   };
 
   const handleShare = async () => {
     triggerHaptic();
     try {
       await Share.share({
-        title: `Post by ${post.author?.display_name || 'Gamer'} on CaisterPlayz`,
+        title: `Post by ${author.name || author.username || 'Gamer'} on CaisterPlayz`,
         text: post.content,
         url: window.location.href,
-        dialogTitle: 'Share with squad',
       });
     } catch (err) {
       if (navigator.share) {
         try {
           await navigator.share({
-            title: `Post by ${post.author?.display_name || 'Gamer'} on CaisterPlayz`,
+            title: `Post by ${author.name || author.username || 'Gamer'} on CaisterPlayz`,
             text: post.content,
             url: window.location.href,
           });
         } catch (e) {}
       } else {
         navigator.clipboard.writeText(window.location.href);
-        alert('Post link copied to clipboard!');
+        alert('Post link copied!');
       }
     }
   };
@@ -161,19 +153,19 @@ export const PostCard = ({ post, onLikeToggle, onDelete, onBlockUser }) => {
       <div className="post-header">
         <div className="author-meta">
           <img
-            src={post.author?.avatar_url || 'https://api.dicebear.com/7.x/bottts-neutral/svg?seed=' + (post.user_id || 'author')}
-            alt={post.author?.display_name}
+            src={author.avatar_url || `https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${author.id || 'author'}`}
+            alt={author.name}
             className="avatar"
           />
           <div className="author-names">
             <div className="author-display">
-              {post.author?.display_name || 'Gamer'}
-              {post.author?.is_verified && <span className="verified-icon" title="Verified Creator">✓</span>}
+              {author.name || author.username || 'Gamer'}
+              {author.is_verified && <span className="verified-icon" title="Verified Creator">✓</span>}
             </div>
             <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
-              <span className="author-handle">@{post.author?.username || 'player'}</span>
-              {post.author?.fortnite_username && (
-                <span className="author-ign">⚡ IGN: {post.author.fortnite_username}</span>
+              <span className="author-handle">@{author.username || 'player'}</span>
+              {author.fortnite_username && (
+                <span className="author-ign">⚡ IGN: {author.fortnite_username}</span>
               )}
             </div>
           </div>
@@ -234,7 +226,7 @@ export const PostCard = ({ post, onLikeToggle, onDelete, onBlockUser }) => {
                     style={{ width: '100%', justifyContent: 'flex-start', padding: '0.5rem', gap: '0.5rem' }}
                     onClick={() => {
                       setShowMenu(false);
-                      if (onBlockUser) onBlockUser(post.author?.id || post.user_id, post.author?.display_name);
+                      if (onBlockUser) onBlockUser(author.id, author.name || author.username);
                     }}
                   >
                     <UserX size={16} color="var(--text-muted)" /> Block User
@@ -250,12 +242,12 @@ export const PostCard = ({ post, onLikeToggle, onDelete, onBlockUser }) => {
       <div className="post-content-text">{post.content}</div>
 
       {/* Media (Images & Clips) */}
-      {post.media_url && (
+      {mediaUrl && (
         <div className="post-media-container">
           {post.media_type === 'video' ? (
-            <video src={post.media_url} controls playsInline preload="metadata" />
+            <video src={mediaUrl} controls playsInline preload="metadata" />
           ) : (
-            <img src={post.media_url} alt="Post content" loading="lazy" />
+            <img src={mediaUrl} alt="Post content" loading="lazy" />
           )}
         </div>
       )}
@@ -286,7 +278,7 @@ export const PostCard = ({ post, onLikeToggle, onDelete, onBlockUser }) => {
           </button>
         </div>
         <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-          {post.created_at ? new Date(post.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' }) : 'Recent'}
+          {post.created ? new Date(post.created).toLocaleDateString([], { month: 'short', day: 'numeric' }) : 'Recent'}
         </span>
       </div>
 
@@ -310,46 +302,48 @@ export const PostCard = ({ post, onLikeToggle, onDelete, onBlockUser }) => {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
             {comments.length === 0 ? (
               <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textAlign: 'center', padding: '0.5rem' }}>
-                No comments yet. Drop the first thought!
+                No comments yet.
               </p>
             ) : (
-              comments.map((comm) => (
-                <div key={comm.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', background: 'var(--bg-input)', padding: '0.5rem 0.75rem', borderRadius: '10px' }}>
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <img
-                      src={comm.author?.avatar_url || 'https://api.dicebear.com/7.x/bottts-neutral/svg?seed=' + (comm.user_id || 'user')}
-                      alt=""
-                      className="avatar sm"
-                    />
-                    <div>
-                      <div style={{ fontSize: '0.8rem', fontWeight: '700' }}>
-                        {comm.author?.display_name || 'Gamer'}
+              comments.map((comm) => {
+                const commAuthor = comm.expand?.user || {};
+                return (
+                  <div key={comm.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', background: 'var(--bg-input)', padding: '0.5rem 0.75rem', borderRadius: '10px' }}>
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <img
+                        src={commAuthor.avatar_url || `https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${comm.user}`}
+                        alt=""
+                        className="avatar sm"
+                      />
+                      <div>
+                        <div style={{ fontSize: '0.8rem', fontWeight: '700' }}>
+                          {commAuthor.name || commAuthor.username || 'Gamer'}
+                        </div>
+                        <div style={{ fontSize: '0.85rem' }}>{comm.content}</div>
                       </div>
-                      <div style={{ fontSize: '0.85rem' }}>{comm.content}</div>
                     </div>
+                    {(user?.id === comm.user || isAuthor) && (
+                      <button
+                        onClick={() => handleDeleteComment(comm.id)}
+                        style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '1rem' }}
+                      >
+                        ×
+                      </button>
+                    )}
                   </div>
-                  {(user?.id === comm.user_id || isAuthor) && (
-                    <button
-                      onClick={() => handleDeleteComment(comm.id)}
-                      style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '1rem' }}
-                    >
-                      ×
-                    </button>
-                  )}
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>
       )}
 
-      {/* Report Modal */}
       <ReportModal
         isOpen={reportOpen}
         onClose={() => setReportOpen(false)}
         targetType="post"
         targetId={post.id}
-        targetName={post.author?.display_name}
+        targetName={author.name || author.username}
       />
     </article>
   );

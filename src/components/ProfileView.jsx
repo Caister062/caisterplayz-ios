@@ -1,38 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Trophy, ShieldCheck, Gamepad2, Award } from 'lucide-react';
+import { Settings, Trophy, Gamepad2 } from 'lucide-react';
 import { useAuth } from '../lib/AuthContext';
-import { supabase } from '../lib/supabase';
+import { pb } from '../lib/pocketbase';
 import { PostCard } from './PostCard';
 
 export const ProfileView = ({ onOpenSettings, userPosts = [], onDeletePost }) => {
   const { profile, user } = useAuth();
-  const [activeTab, setActiveTab] = useState('posts'); // 'posts', 'achievements'
+  const [activeTab, setActiveTab] = useState('posts');
   const [achievements, setAchievements] = useState([]);
-  const [loadingBadges, setLoadingBadges] = useState(true);
 
-  // Fetch real unlocked achievements from Supabase
+  // Fetch real achievements from PocketBase
   useEffect(() => {
-    const fetchAchievements = async () => {
-      if (!user?.id) return;
-      try {
-        const { data } = await supabase
-          .from('user_achievements')
-          .select('*, achievement:achievements(*)')
-          .eq('user_id', user.id);
-
-        if (data && data.length > 0) {
-          setAchievements(data.map((ua) => ua.achievement));
-        } else {
-          setAchievements([]);
-        }
-      } catch (err) {
-        console.error('Error fetching user achievements:', err);
-      } finally {
-        setLoadingBadges(false);
-      }
-    };
-
-    fetchAchievements();
+    if (!user?.id) return;
+    pb.collection('user_achievements')
+      .getFullList({ filter: `user = "${user.id}"`, expand: 'achievement' })
+      .then((records) => setAchievements(records.map((r) => r.expand?.achievement || {})))
+      .catch(() => setAchievements([]));
   }, [user?.id]);
 
   const followerCount = profile?.follower_count || 0;
@@ -56,7 +39,7 @@ export const ProfileView = ({ onOpenSettings, userPosts = [], onDeletePost }) =>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginTop: '-36px', marginBottom: '0.75rem' }}>
             <img
               src={profile?.avatar_url || `https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${profile?.id || 'player'}`}
-              alt={profile?.display_name}
+              alt={profile?.name}
               className="avatar lg"
             />
             <button
@@ -70,7 +53,7 @@ export const ProfileView = ({ onOpenSettings, userPosts = [], onDeletePost }) =>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-              <h2 style={{ fontSize: '1.25rem', fontWeight: '800' }}>{profile?.display_name || 'Gamer'}</h2>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: '800' }}>{profile?.name || profile?.username || 'Gamer'}</h2>
               {profile?.is_verified && <span className="verified-icon" title="Verified Creator">✓</span>}
             </div>
             <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>@{profile?.username || 'player'}</span>
@@ -148,7 +131,7 @@ export const ProfileView = ({ onOpenSettings, userPosts = [], onDeletePost }) =>
           {achievements.length === 0 ? (
             <div className="card" style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
               <Trophy size={32} style={{ margin: '0 auto 0.5rem', opacity: 0.5 }} />
-              <p>Complete community challenges and share gameplay clips to earn badges!</p>
+              <p>Complete community challenges to earn gaming badges!</p>
             </div>
           ) : (
             achievements.map((ach) => (
