@@ -1,18 +1,33 @@
 import { createClient } from '@supabase/supabase-js';
 
-// Access Supabase credentials from Vite environment variables, with safe fallback for development
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || 'https://caisterplayz-social.supabase.co';
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM0NTYwMDB9.placeholder';
+// Retrieve credentials from localStorage or Vite environment variables
+export const getStoredSupabaseConfig = () => {
+  const customUrl = localStorage.getItem('caisterplayz_supabase_url');
+  const customKey = localStorage.getItem('caisterplayz_supabase_anon_key');
 
-export const isSupabaseConfigured = () => {
-  return (
-    import.meta.env.VITE_SUPABASE_URL &&
-    import.meta.env.VITE_SUPABASE_ANON_KEY &&
-    import.meta.env.VITE_SUPABASE_URL !== 'https://caisterplayz-social.supabase.co'
-  );
+  const url = customUrl || import.meta.env.VITE_SUPABASE_URL || '';
+  const key = customKey || import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+
+  return { url, key };
 };
 
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+export const setStoredSupabaseConfig = (url, key) => {
+  if (url) localStorage.setItem('caisterplayz_supabase_url', url.trim());
+  if (key) localStorage.setItem('caisterplayz_supabase_anon_key', key.trim());
+};
+
+const { url: initialUrl, key: initialKey } = getStoredSupabaseConfig();
+
+// Safe fallback URL/key to prevent initialization crash before connection
+const activeUrl = initialUrl || 'https://placeholder.supabase.co';
+const activeKey = initialKey || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.placeholder';
+
+export const isSupabaseConfigured = () => {
+  const { url, key } = getStoredSupabaseConfig();
+  return Boolean(url && key && !url.includes('placeholder.supabase.co') && !url.includes('caisterplayz-social.supabase.co'));
+};
+
+export let supabase = createClient(activeUrl, activeKey, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
@@ -24,3 +39,15 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     },
   },
 });
+
+export const reinitializeSupabase = (url, key) => {
+  setStoredSupabaseConfig(url, key);
+  supabase = createClient(url.trim(), key.trim(), {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+    },
+  });
+  return supabase;
+};
