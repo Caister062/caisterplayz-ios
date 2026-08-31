@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Heart, MessageCircle, Share2, MoreHorizontal, Flag, UserX, Trash2 } from 'lucide-react';
 import { useAuth } from '../lib/AuthContext';
-import { pb } from '../lib/pocketbase';
+import { pb, getDatabase } from '../lib/pocketbase';
 import { ReportModal } from './ReportModal';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { Share } from '@capacitor/share';
@@ -20,8 +20,7 @@ export const PostCard = ({ post, onLikeToggle, onDelete, onBlockUser }) => {
   const author = post.expand?.user || post.author || {};
   const isAuthor = user?.id === (post.user || post.user_id);
 
-  // Compute media URL from PocketBase record or direct link
-  const mediaUrl = post.media
+  const mediaUrl = post.media && pb
     ? pb.files.getUrl(post, post.media)
     : post.media_url || '';
 
@@ -30,24 +29,22 @@ export const PostCard = ({ post, onLikeToggle, onDelete, onBlockUser }) => {
       if (!post.id) return;
 
       try {
-        // Fetch comments from PocketBase
-        const commRecords = await pb.collection('comments').getList(1, 50, {
-          filter: `post = "${post.id}"`,
-          sort: 'created',
-          expand: 'user',
-        });
-        setComments(commRecords.items);
-        setCommentCount(commRecords.totalItems);
+        const db = await getDatabase();
 
-        // Check if user liked post
+        // 1. Fetch comments
+        const allComments = await db.getAllFromIndex('comments', 'post', post.id);
+        if (allComments && allComments.length > 0) {
+          setComments(allComments);
+          setCommentCount(allComments.length);
+        }
+
+        // 2. Check likes
         if (user?.id) {
-          const likeRecord = await pb.collection('likes').getFirstListItem(
-            `post = "${post.id}" && user = "${user.id}"`
-          ).catch(() => null);
+          const likeRecord = await db.getFromIndex('likes', 'post_user', [post.id, user.id]);
           setIsLiked(!!likeRecord);
         }
       } catch (err) {
-        // Safe catch if collections are empty
+        console.error('Error fetching comments/likes:', err);
       }
     };
 
@@ -66,20 +63,22 @@ export const PostCard = ({ post, onLikeToggle, onDelete, onBlockUser }) => {
 
     const nextState = !isLiked;
     setIsLiked(nextState);
-    setLikeCount((prev) => (nextState ? prev + 1 : Math.max(prev - 1, 0)));
+    const newCount = nextState ? likeCount + 1 : Math.max(likeCount - 1, 0);
+    setLikeCount(newCount);
 
     try {
+      const db = await getDatabase();
       if (nextState) {
-        await pb.collection('likes').create({ post: post.id, user: user.id });
-        await pb.collection('posts').update(post.id, { 'like_count+': 1 });
+        await db.put('likes', { id: `like_${post.id}_${user.id}`, post: post.id, user: user.id });
       } else {
-        const likeRecord = await pb.collection('likes').getFirstListItem(
-          `post = "${post.id}" && user = "${user.id}"`
-        ).catch(() => null);
-        if (likeRecord) {
-          await pb.collection('likes').delete(likeRecord.id);
-          await pb.collection('posts').update(post.id, { 'like_count-': 1 });
-        }
+        await db.delete('likes', `like_${post.id}_${user.id}`);
+      }
+
+      // Update post in db
+      const storedPost = await db.get('posts', post.id);
+      if (storedPost) {
+        storedPost.like_count = newCount;
+        await db.put('posts', storedPost);
       }
     } catch (e) {
       console.error('Like error:', e);
@@ -95,18 +94,31 @@ export const PostCard = ({ post, onLikeToggle, onDelete, onBlockUser }) => {
     setNewComment('');
 
     try {
-      const record = await pb.collection('comments').create(
-        {
-          post: post.id,
-          user: user.id,
-          content,
+      const commObj = {
+        id: 'comm_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+        post: post.id,
+        user: user.id,
+        content,
+        created: new Date().toISOString(),
+        author: {
+          name: user.name || user.username || 'Gamer',
+          username: user.username || 'player',
+          avatar_url: user.avatar_url || `https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${user.username}`,
         },
-        { expand: 'user' }
-      );
+      };
 
-      setComments((prev) => [...prev, record]);
-      setCommentCount((prev) => prev + 1);
-      await pb.collection('posts').update(post.id, { 'comment_count+': 1 });
+      const db = await getDatabase();
+      await db.put('comments', commObj);
+
+      setComments((prev) => [...prev, commObj]);
+      const newCommentCount = commentCount + 1;
+      setCommentCount(newCommentCount);
+
+      const storedPost = await db.get('posts', post.id);
+      if (storedPost) {
+        storedPost.comment_count = newCommentCount;
+        await db.put('posts', storedPost);
+      }
     } catch (err) {
       console.error('Comment submission error:', err);
     }
@@ -118,8 +130,8 @@ export const PostCard = ({ post, onLikeToggle, onDelete, onBlockUser }) => {
     setCommentCount((prev) => Math.max(prev - 1, 0));
 
     try {
-      await pb.collection('comments').delete(commentId);
-      await pb.collection('posts').update(post.id, { 'comment_count-': 1 });
+      const db = await getDatabase();
+      await db.delete('comments', commentId);
     } catch (e) {}
   };
 
@@ -226,7 +238,7 @@ export const PostCard = ({ post, onLikeToggle, onDelete, onBlockUser }) => {
                     style={{ width: '100%', justifyContent: 'flex-start', padding: '0.5rem', gap: '0.5rem' }}
                     onClick={() => {
                       setShowMenu(false);
-                      if (onBlockUser) onBlockUser(author.id, author.name || author.username);
+                      if (onBlockUser) onBlockUser(author.id || post.user, author.name || author.username);
                     }}
                   >
                     <UserX size={16} color="var(--text-muted)" /> Block User
@@ -306,7 +318,7 @@ export const PostCard = ({ post, onLikeToggle, onDelete, onBlockUser }) => {
               </p>
             ) : (
               comments.map((comm) => {
-                const commAuthor = comm.expand?.user || {};
+                const commAuthor = comm.author || comm.expand?.user || {};
                 return (
                   <div key={comm.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', background: 'var(--bg-input)', padding: '0.5rem 0.75rem', borderRadius: '10px' }}>
                     <div style={{ display: 'flex', gap: '0.5rem' }}>

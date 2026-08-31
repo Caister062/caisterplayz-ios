@@ -1,14 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { Send, ArrowLeft, MoreHorizontal, Flag, UserX, Shield, MessageCircle } from 'lucide-react';
+import { Send, ArrowLeft, Flag, UserX, MessageCircle } from 'lucide-react';
 import { useAuth } from '../lib/AuthContext';
-import { supabase } from '../lib/supabase';
+import { pb, getDatabase } from '../lib/pocketbase';
 import { ReportModal } from './ReportModal';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 
 export const DirectMessagesView = ({ onBack, onBlockUser }) => {
   const { user } = useAuth();
   const [conversations, setConversations] = useState([]);
-  const [activeChat, setActiveChat] = useState(null); // Selected conversation
+  const [activeChat, setActiveChat] = useState(null);
   const [messages, setMessages] = useState([]);
   const [messageText, setMessageText] = useState('');
   const [reportOpen, setReportOpen] = useState(false);
@@ -20,61 +20,40 @@ export const DirectMessagesView = ({ onBack, onBlockUser }) => {
     } catch (e) {}
   };
 
-  // Fetch real conversations for the authenticated user
+  // Load real conversations
   useEffect(() => {
     const fetchConversations = async () => {
       if (!user?.id) return;
       setLoading(true);
 
       try {
-        // Fetch conversation IDs where user is a member
-        const { data: memberData } = await supabase
-          .from('conversation_members')
-          .select('conversation_id')
-          .eq('user_id', user.id);
+        const db = await getDatabase();
+        const allConvs = await db.getAll('conversations');
+        const userConvs = (allConvs || []).filter(
+          (c) => c.user1 === user.id || c.user2 === user.id
+        );
 
-        if (memberData && memberData.length > 0) {
-          const convIds = memberData.map((m) => m.conversation_id);
+        const enriched = await Promise.all(
+          userConvs.map(async (c) => {
+            const partnerId = c.user1 === user.id ? c.user2 : c.user1;
+            const partnerUser = await db.get('users', partnerId);
+            return {
+              id: c.id,
+              recipient: partnerUser || {
+                id: partnerId,
+                name: 'Gamer',
+                username: 'player',
+                avatar_url: `https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${partnerId}`,
+              },
+              lastMessage: c.last_message || 'Started conversation',
+              timestamp: c.updated ? new Date(c.updated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
+            };
+          })
+        );
 
-          // Get other member details and latest message for each conversation
-          const { data: otherMembers } = await supabase
-            .from('conversation_members')
-            .select('conversation_id, user:profiles(*)')
-            .in('conversation_id', convIds)
-            .neq('user_id', user.id);
-
-          if (otherMembers) {
-            const formatted = await Promise.all(
-              otherMembers.map(async (om) => {
-                const { data: latestMsg } = await supabase
-                  .from('messages')
-                  .select('*')
-                  .eq('conversation_id', om.conversation_id)
-                  .order('created_at', { ascending: false })
-                  .limit(1)
-                  .maybeSingle();
-
-                return {
-                  id: om.conversation_id,
-                  recipient: om.user || {
-                    display_name: 'Gamer',
-                    username: 'player',
-                    avatar_url: `https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${om.conversation_id}`,
-                  },
-                  lastMessage: latestMsg?.content || 'Started conversation',
-                  timestamp: latestMsg?.created_at
-                    ? new Date(latestMsg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                    : '',
-                };
-              })
-            );
-            setConversations(formatted);
-          }
-        } else {
-          setConversations([]);
-        }
+        setConversations(enriched);
       } catch (err) {
-        console.error('Error loading conversations:', err);
+        console.error('Conversations load error:', err);
       } finally {
         setLoading(false);
       }
@@ -83,39 +62,21 @@ export const DirectMessagesView = ({ onBack, onBlockUser }) => {
     fetchConversations();
   }, [user?.id]);
 
-  // Fetch real messages for active conversation and subscribe to Realtime updates
+  // Load messages for active conversation
   useEffect(() => {
     if (!activeChat) return;
 
     const fetchMessages = async () => {
-      const { data } = await supabase
-        .from('messages')
-        .select('*')
-        .eq('conversation_id', activeChat.id)
-        .order('created_at', { ascending: true });
-
-      if (data) {
-        setMessages(data);
+      try {
+        const db = await getDatabase();
+        const allMsgs = await db.getAllFromIndex('messages', 'conversation_id', activeChat.id);
+        setMessages(allMsgs || []);
+      } catch (err) {
+        console.error('Messages load error:', err);
       }
     };
 
     fetchMessages();
-
-    // Subscribe to new real-time messages for this conversation
-    const channel = supabase
-      .channel(`chat:${activeChat.id}`)
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'messages', filter: `conversation_id=eq.${activeChat.id}` },
-        (payload) => {
-          setMessages((prev) => [...prev, payload.new]);
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
   }, [activeChat?.id]);
 
   const handleSendMessage = async (e) => {
@@ -127,19 +88,26 @@ export const DirectMessagesView = ({ onBack, onBlockUser }) => {
     setMessageText('');
 
     try {
-      const { data, error } = await supabase
-        .from('messages')
-        .insert({
-          conversation_id: activeChat.id,
-          sender_id: user.id,
-          content,
-        })
-        .select()
-        .single();
+      const msgObj = {
+        id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+        conversation_id: activeChat.id,
+        sender_id: user.id,
+        content,
+        created: new Date().toISOString(),
+      };
 
-      if (data) {
-        setMessages((prev) => [...prev, data]);
+      const db = await getDatabase();
+      await db.put('messages', msgObj);
+
+      // Update conversation last message
+      const conv = await db.get('conversations', activeChat.id);
+      if (conv) {
+        conv.last_message = content;
+        conv.updated = new Date().toISOString();
+        await db.put('conversations', conv);
       }
+
+      setMessages((prev) => [...prev, msgObj]);
     } catch (err) {
       console.error('Failed to send message:', err);
     }
@@ -154,7 +122,7 @@ export const DirectMessagesView = ({ onBack, onBlockUser }) => {
             <ArrowLeft size={18} />
           </button>
           <h2 style={{ fontSize: '1.2rem', fontWeight: '800' }}>
-            {activeChat ? activeChat.recipient.display_name : 'Direct Messages'}
+            {activeChat ? (activeChat.recipient.name || activeChat.recipient.username) : 'Direct Messages'}
           </h2>
         </div>
 
@@ -173,7 +141,7 @@ export const DirectMessagesView = ({ onBack, onBlockUser }) => {
               style={{ width: '36px', height: '36px' }}
               title="Block User"
               onClick={() => {
-                if (onBlockUser) onBlockUser(activeChat.recipient.id, activeChat.recipient.display_name);
+                if (onBlockUser) onBlockUser(activeChat.recipient.id, activeChat.recipient.name || activeChat.recipient.username);
                 setActiveChat(null);
               }}
             >
@@ -184,7 +152,6 @@ export const DirectMessagesView = ({ onBack, onBlockUser }) => {
       </div>
 
       {!activeChat ? (
-        /* Real Conversation List */
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
           {loading ? (
             <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
@@ -219,7 +186,7 @@ export const DirectMessagesView = ({ onBack, onBlockUser }) => {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.2rem' }}>
                     <span style={{ fontWeight: '700', fontSize: '0.95rem' }}>
-                      {conv.recipient.display_name}
+                      {conv.recipient.name || conv.recipient.username}
                     </span>
                     <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{conv.timestamp}</span>
                   </div>
@@ -232,7 +199,6 @@ export const DirectMessagesView = ({ onBack, onBlockUser }) => {
           )}
         </div>
       ) : (
-        /* Real Active Chat View */
         <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 180px)' }}>
           <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.75rem', padding: '0.5rem 0' }}>
             {messages.length === 0 ? (
@@ -258,7 +224,7 @@ export const DirectMessagesView = ({ onBack, onBlockUser }) => {
                   >
                     <p>{m.content}</p>
                     <span style={{ display: 'block', fontSize: '0.65rem', opacity: 0.7, textAlign: 'right', marginTop: '0.2rem' }}>
-                      {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      {new Date(m.created).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </span>
                   </div>
                 );
@@ -266,7 +232,6 @@ export const DirectMessagesView = ({ onBack, onBlockUser }) => {
             )}
           </div>
 
-          {/* Message Input */}
           <form onSubmit={handleSendMessage} style={{ display: 'flex', gap: '0.5rem', marginTop: 'auto', paddingTop: '0.5rem' }}>
             <input
               type="text"
@@ -282,14 +247,13 @@ export const DirectMessagesView = ({ onBack, onBlockUser }) => {
         </div>
       )}
 
-      {/* Report Modal */}
       {activeChat && (
         <ReportModal
           isOpen={reportOpen}
           onClose={() => setReportOpen(false)}
           targetType="message"
           targetId={activeChat.id}
-          targetName={activeChat.recipient.display_name}
+          targetName={activeChat.recipient.name || activeChat.recipient.username}
         />
       )}
     </div>

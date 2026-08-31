@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Search, UserPlus, UserCheck, Flame, Trophy } from 'lucide-react';
+import { Search, UserPlus, UserCheck, Flame } from 'lucide-react';
 import { useAuth } from '../lib/AuthContext';
-import { pb } from '../lib/pocketbase';
+import { pb, getDatabase } from '../lib/pocketbase';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 
 export const DiscoverView = ({ onSelectPlayer }) => {
@@ -11,26 +11,26 @@ export const DiscoverView = ({ onSelectPlayer }) => {
   const [followingMap, setFollowingMap] = useState({});
   const [loading, setLoading] = useState(true);
 
-  // Fetch real users and follow states from PocketBase
+  // Fetch real registered players from database
   useEffect(() => {
     const fetchPlayers = async () => {
       setLoading(true);
       try {
-        const records = await pb.collection('users').getList(1, 30, {
-          filter: user?.id ? `id != "${user.id}"` : '',
-          sort: '-follower_count',
-        });
-        setPlayers(records.items || []);
+        const db = await getDatabase();
+        const allUsers = await db.getAll('users');
+        if (allUsers) {
+          setPlayers(allUsers.filter((u) => u.id !== user?.id));
+        }
 
         if (user?.id) {
-          const follows = await pb.collection('follows').getFullList({
-            filter: `follower = "${user.id}"`,
-          });
-          const followStatus = {};
-          follows.forEach((f) => {
-            followStatus[f.following] = true;
-          });
-          setFollowingMap(followStatus);
+          const follows = await db.getAll('follows');
+          if (follows) {
+            const followStatus = {};
+            follows.filter((f) => f.follower === user.id).forEach((f) => {
+              followStatus[f.following] = true;
+            });
+            setFollowingMap(followStatus);
+          }
         }
       } catch (err) {
         console.error('Discover players fetch error:', err);
@@ -61,18 +61,26 @@ export const DiscoverView = ({ onSelectPlayer }) => {
     }));
 
     try {
+      const db = await getDatabase();
       if (nextState) {
-        await pb.collection('follows').create({ follower: user.id, following: playerId });
-        await pb.collection('users').update(playerId, { 'follower_count+': 1 });
-        await pb.collection('users').update(user.id, { 'following_count+': 1 });
+        await db.put('follows', {
+          id: `fol_${user.id}_${playerId}`,
+          follower: user.id,
+          following: playerId,
+        });
+
+        // Update target player follower count
+        const targetPlayer = await db.get('users', playerId);
+        if (targetPlayer) {
+          targetPlayer.follower_count = (targetPlayer.follower_count || 0) + 1;
+          await db.put('users', targetPlayer);
+        }
       } else {
-        const record = await pb.collection('follows').getFirstListItem(
-          `follower = "${user.id}" && following = "${playerId}"`
-        );
-        if (record) {
-          await pb.collection('follows').delete(record.id);
-          await pb.collection('users').update(playerId, { 'follower_count-': 1 });
-          await pb.collection('users').update(user.id, { 'following_count-': 1 });
+        await db.delete('follows', `fol_${user.id}_${playerId}`);
+        const targetPlayer = await db.get('users', playerId);
+        if (targetPlayer) {
+          targetPlayer.follower_count = Math.max((targetPlayer.follower_count || 0) - 1, 0);
+          await db.put('users', targetPlayer);
         }
       }
     } catch (e) {

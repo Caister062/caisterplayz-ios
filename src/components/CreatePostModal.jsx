@@ -1,11 +1,12 @@
 import React, { useState, useRef } from 'react';
 import { Sparkles, X, UploadCloud, AlertCircle } from 'lucide-react';
 import { useAuth } from '../lib/AuthContext';
-import { pb } from '../lib/pocketbase';
+import { pb, getDatabase } from '../lib/pocketbase';
+import { uploadMediaToPocketBase } from '../lib/storage';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 
 export const CreatePostModal = ({ isOpen, onClose, onPostCreated }) => {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const [content, setContent] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState('');
@@ -55,24 +56,54 @@ export const CreatePostModal = ({ isOpen, onClose, onPostCreated }) => {
     setErrorMsg('');
 
     try {
-      const formData = new FormData();
-      formData.append('user', user.id);
-      formData.append('content', content.trim());
-      formData.append('media_type', selectedFile ? mediaType : 'none');
-      formData.append('like_count', 0);
-      formData.append('comment_count', 0);
-      formData.append('share_count', 0);
+      let finalMediaUrl = '';
 
       if (selectedFile) {
-        formData.append('media', selectedFile);
+        const { url } = await uploadMediaToPocketBase(selectedFile, 'posts');
+        finalMediaUrl = url || '';
       }
 
-      const record = await pb.collection('posts').create(formData, {
-        expand: 'user',
-      });
+      const postObj = {
+        id: 'post_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+        user: user.id,
+        content: content.trim(),
+        media_type: selectedFile ? mediaType : 'none',
+        media_url: finalMediaUrl,
+        like_count: 0,
+        comment_count: 0,
+        share_count: 0,
+        created: new Date().toISOString(),
+        author: {
+          id: user.id,
+          name: profile?.name || user.username || 'Gamer',
+          username: user.username || 'player',
+          avatar_url: profile?.avatar_url || `https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${user.username}`,
+          fortnite_username: profile?.fortnite_username || '',
+          is_verified: profile?.is_verified || false,
+        },
+      };
+
+      // 1. Try PocketBase if active
+      if (pb) {
+        try {
+          const formData = new FormData();
+          formData.append('user', user.id);
+          formData.append('content', content.trim());
+          formData.append('media_type', selectedFile ? mediaType : 'none');
+          if (selectedFile) formData.append('media', selectedFile);
+          const pbRecord = await pb.collection('posts').create(formData, { expand: 'user' });
+          postObj.id = pbRecord.id;
+        } catch (e) {
+          console.warn('PocketBase post write skipped, writing to local DB');
+        }
+      }
+
+      // 2. Save in persistent local database
+      const db = await getDatabase();
+      await db.put('posts', postObj);
 
       if (onPostCreated) {
-        onPostCreated(record);
+        onPostCreated(postObj);
       }
 
       triggerHaptic();
@@ -80,8 +111,8 @@ export const CreatePostModal = ({ isOpen, onClose, onPostCreated }) => {
       handleRemoveFile();
       onClose();
     } catch (err) {
-      console.error('Post creation error in PocketBase:', err);
-      setErrorMsg(err.message || 'Failed to publish post to PocketBase.');
+      console.error('Post creation error:', err);
+      setErrorMsg(err.message || 'Failed to publish post.');
     } finally {
       setUploading(false);
     }
@@ -177,7 +208,7 @@ export const CreatePostModal = ({ isOpen, onClose, onPostCreated }) => {
                 Tap to Pick Photo or Gameplay Clip
               </span>
               <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                Directly stored in PocketBase
+                PNG, JPG, MP4, MOV up to 50MB
               </span>
             </div>
           )}
@@ -187,7 +218,7 @@ export const CreatePostModal = ({ isOpen, onClose, onPostCreated }) => {
               {content.length}/1000 characters
             </span>
             <button type="submit" className="btn btn-primary" disabled={!content.trim() || uploading}>
-              {uploading ? 'Uploading...' : 'Post to Feed ⚡'}
+              {uploading ? 'Publishing...' : 'Post to Feed ⚡'}
             </button>
           </div>
         </form>
