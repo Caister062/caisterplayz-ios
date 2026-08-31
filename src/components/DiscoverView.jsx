@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Search, UserPlus, UserCheck, Flame, Trophy, AlertCircle } from 'lucide-react';
 import { useAuth } from '../lib/AuthContext';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase } from '../lib/supabase';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 
 export const DiscoverView = ({ onSelectPlayer }) => {
@@ -11,67 +11,42 @@ export const DiscoverView = ({ onSelectPlayer }) => {
   const [followingMap, setFollowingMap] = useState({});
   const [loading, setLoading] = useState(true);
 
-  // Fetch real players and following relationships from Supabase
+  // Fetch real players and real follow relationships from Supabase
   useEffect(() => {
     const fetchPlayers = async () => {
       setLoading(true);
-      if (isSupabaseConfigured()) {
-        try {
-          // Fetch profiles excluding current user
-          let query = supabase.from('profiles').select('*').limit(20);
-          if (user?.id) {
-            query = query.neq('id', user.id);
-          }
-          const { data: profilesData } = await query;
-
-          if (profilesData) {
-            setPlayers(profilesData);
-          }
-
-          // Fetch current user's follows
-          if (user?.id) {
-            const { data: followsData } = await supabase
-              .from('follows')
-              .select('following_id')
-              .eq('follower_id', user.id);
-
-            if (followsData) {
-              const followStatus = {};
-              followsData.forEach((f) => {
-                followStatus[f.following_id] = true;
-              });
-              setFollowingMap(followStatus);
-            }
-          }
-        } catch (err) {
-          console.error('Discover players fetch error:', err);
+      try {
+        let query = supabase.from('profiles').select('*').limit(30);
+        if (user?.id) {
+          query = query.neq('id', user.id);
         }
-      } else {
-        // Fallback demo players for offline state
-        setPlayers([
-          {
-            id: 'usr_fn_streamer',
-            display_name: 'VortexSniper',
-            username: 'vortex_sniper',
-            fortnite_username: 'VortexSnipes',
-            avatar_url: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&h=150&fit=crop',
-            bio: 'Competitive shooter & trickshot creator.',
-            follower_count: 28400,
-            is_verified: true,
-          },
-          {
-            id: 'usr_mythic_builder',
-            display_name: 'MythicBuilder',
-            username: 'mythic_builder',
-            fortnite_username: 'MythicBuilds99',
-            avatar_url: 'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?w=150&h=150&fit=crop',
-            bio: 'Custom map creator & tournament scrim organizer.',
-            follower_count: 9800,
-            is_verified: false,
-          },
-        ]);
+        const { data: profilesData } = await query;
+
+        if (profilesData) {
+          setPlayers(profilesData);
+        } else {
+          setPlayers([]);
+        }
+
+        if (user?.id) {
+          const { data: followsData } = await supabase
+            .from('follows')
+            .select('following_id')
+            .eq('follower_id', user.id);
+
+          if (followsData) {
+            const followStatus = {};
+            followsData.forEach((f) => {
+              followStatus[f.following_id] = true;
+            });
+            setFollowingMap(followStatus);
+          }
+        }
+      } catch (err) {
+        console.error('Discover players fetch error:', err);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     };
 
     fetchPlayers();
@@ -84,7 +59,9 @@ export const DiscoverView = ({ onSelectPlayer }) => {
   };
 
   const handleFollowToggle = async (playerId) => {
+    if (!user?.id) return;
     triggerHaptic();
+
     const isCurrentlyFollowing = !!followingMap[playerId];
     const nextState = !isCurrentlyFollowing;
 
@@ -93,12 +70,10 @@ export const DiscoverView = ({ onSelectPlayer }) => {
       [playerId]: nextState,
     }));
 
-    if (isSupabaseConfigured() && user?.id) {
-      if (nextState) {
-        await supabase.from('follows').insert({ follower_id: user.id, following_id: playerId });
-      } else {
-        await supabase.from('follows').delete().match({ follower_id: user.id, following_id: playerId });
-      }
+    if (nextState) {
+      await supabase.from('follows').insert({ follower_id: user.id, following_id: playerId });
+    } else {
+      await supabase.from('follows').delete().match({ follower_id: user.id, following_id: playerId });
     }
   };
 
@@ -147,7 +122,7 @@ export const DiscoverView = ({ onSelectPlayer }) => {
         ))}
       </div>
 
-      {/* Recommended Players Section */}
+      {/* Real Players Section */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.9rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <Flame size={20} color="var(--accent-gold)" />
@@ -159,8 +134,10 @@ export const DiscoverView = ({ onSelectPlayer }) => {
             Finding players...
           </div>
         ) : filteredPlayers.length === 0 ? (
-          <div className="card" style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
-            No players found matching your search.
+          <div className="card" style={{ textAlign: 'center', padding: '2.5rem 1rem', color: 'var(--text-muted)' }}>
+            {players.length === 0
+              ? 'No other players registered yet. Invite your friends to join!'
+              : 'No players found matching your search.'}
           </div>
         ) : (
           filteredPlayers.map((player) => {
@@ -170,7 +147,7 @@ export const DiscoverView = ({ onSelectPlayer }) => {
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                     <img
-                      src={player.avatar_url || 'https://api.dicebear.com/7.x/bottts-neutral/svg?seed=' + player.id}
+                      src={player.avatar_url || `https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${player.id}`}
                       alt=""
                       className="avatar"
                     />

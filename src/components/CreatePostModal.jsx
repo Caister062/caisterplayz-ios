@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { Image, Video, Sparkles, X, UploadCloud, AlertCircle } from 'lucide-react';
 import { useAuth } from '../lib/AuthContext';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase } from '../lib/supabase';
 import { uploadMediaToSupabase } from '../lib/storage';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 
@@ -10,7 +10,7 @@ export const CreatePostModal = ({ isOpen, onClose, onPostCreated }) => {
   const [content, setContent] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState('');
-  const [mediaType, setMediaType] = useState('none'); // 'none', 'image', 'video'
+  const [mediaType, setMediaType] = useState('none');
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState('');
@@ -29,7 +29,6 @@ export const CreatePostModal = ({ isOpen, onClose, onPostCreated }) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Check size limit: 50MB
     if (file.size > 50 * 1024 * 1024) {
       setErrorMsg('File too large. Maximum size is 50MB.');
       return;
@@ -52,7 +51,7 @@ export const CreatePostModal = ({ isOpen, onClose, onPostCreated }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!content.trim() || uploading) return;
+    if (!content.trim() || uploading || !user?.id) return;
 
     setUploading(true);
     setErrorMsg('');
@@ -60,10 +59,9 @@ export const CreatePostModal = ({ isOpen, onClose, onPostCreated }) => {
     try {
       let finalMediaUrl = '';
 
-      // Upload file to Supabase Storage if present
       if (selectedFile) {
         setUploadProgress(30);
-        const { url, error } = await uploadMediaToSupabase(selectedFile, 'posts', user?.id || 'guest');
+        const { url, error } = await uploadMediaToSupabase(selectedFile, 'posts', user.id);
         if (error) {
           throw new Error('Media upload failed: ' + error.message);
         }
@@ -71,9 +69,8 @@ export const CreatePostModal = ({ isOpen, onClose, onPostCreated }) => {
         setUploadProgress(70);
       }
 
-      // Create Post record in Supabase Database
       const postData = {
-        user_id: user?.id,
+        user_id: user.id,
         content: content.trim(),
         media_type: selectedFile ? mediaType : 'none',
         media_url: finalMediaUrl,
@@ -82,32 +79,16 @@ export const CreatePostModal = ({ isOpen, onClose, onPostCreated }) => {
         share_count: 0,
       };
 
-      if (isSupabaseConfigured()) {
-        const { data, error } = await supabase
-          .from('posts')
-          .insert(postData)
-          .select('*, author:profiles(*)')
-          .single();
+      const { data, error } = await supabase
+        .from('posts')
+        .insert(postData)
+        .select('*, author:profiles(*)')
+        .single();
 
-        if (error) throw error;
-        if (onPostCreated) onPostCreated(data);
-      } else {
-        // Optimistic local state for immediate feedback
-        const mockPost = {
-          ...postData,
-          id: `post_${Date.now()}`,
-          created_at: new Date().toISOString(),
-          author: profile || {
-            id: user?.id,
-            display_name: 'Gamer',
-            username: 'player',
-            avatar_url: 'https://api.dicebear.com/7.x/bottts-neutral/svg?seed=gamer',
-            is_verified: false,
-          },
-          comments: [],
-          is_liked: false,
-        };
-        if (onPostCreated) onPostCreated(mockPost);
+      if (error) throw error;
+
+      if (onPostCreated && data) {
+        onPostCreated(data);
       }
 
       triggerHaptic();
@@ -168,7 +149,6 @@ export const CreatePostModal = ({ isOpen, onClose, onPostCreated }) => {
             autoFocus
           />
 
-          {/* Hidden File Input */}
           <input
             type="file"
             ref={fileInputRef}
@@ -177,7 +157,6 @@ export const CreatePostModal = ({ isOpen, onClose, onPostCreated }) => {
             style={{ display: 'none' }}
           />
 
-          {/* Preview Container or Picker Button */}
           {previewUrl ? (
             <div style={{ position: 'relative', borderRadius: '12px', overflow: 'hidden', maxHeight: '240px', background: '#000' }}>
               {mediaType === 'video' ? (

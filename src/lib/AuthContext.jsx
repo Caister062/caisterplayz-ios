@@ -5,57 +5,43 @@ const AuthContext = createContext(null);
 
 export const useAuth = () => useContext(AuthContext);
 
-// Initial fallback mock user when testing locally before live Supabase credentials are plugged in
-const LOCAL_MOCK_USER = {
-  id: 'usr_caister_leader',
-  email: 'player1@caisterplayz.gg',
-  user_metadata: {
-    username: 'CaisterLegend',
-    display_name: 'Caister Legend ⚡',
-    fortnite_username: 'CaisterVictory24',
-    avatar_url: 'https://images.unsplash.com/photo-1566492031773-4f4e44671857?w=150&h=150&fit=crop&crop=faces',
-    banner_url: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?w=1200&h=400&fit=crop',
-    bio: 'Competitive Fortnite player & content creator. Chapter 5 Unreal Rank 🏆',
-    is_verified: true,
-  },
-};
-
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [isConfigured] = useState(isSupabaseConfigured());
 
-  // Fetch or create profile
+  // Fetch real profile from Supabase Database
   const fetchProfile = async (userId) => {
-    if (!isConfigured) {
-      setProfile({
-        id: userId,
-        username: user?.user_metadata?.username || 'CaisterLegend',
-        display_name: user?.user_metadata?.display_name || 'Caister Legend ⚡',
-        fortnite_username: user?.user_metadata?.fortnite_username || 'CaisterVictory24',
-        avatar_url: user?.user_metadata?.avatar_url || LOCAL_MOCK_USER.user_metadata.avatar_url,
-        banner_url: user?.user_metadata?.banner_url || LOCAL_MOCK_USER.user_metadata.banner_url,
-        bio: user?.user_metadata?.bio || LOCAL_MOCK_USER.user_metadata.bio,
-        is_verified: true,
-        follower_count: 14200,
-        following_count: 85,
-      });
-      return;
-    }
+    if (!userId) return;
 
     try {
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', userId)
-        .single();
+        .maybeSingle();
 
-      if (error && error.code === 'PGRST116') {
-        // Profile not found, let trigger create it or create fallback
-        console.warn('Profile not found, waiting for trigger or fallback creation');
-      } else if (data) {
+      if (data) {
         setProfile(data);
+      } else {
+        // Build profile from auth user metadata if database trigger hasn't completed yet
+        const { data: { user: authUser } } = await supabase.auth.getUser();
+        if (authUser) {
+          const fallbackProfile = {
+            id: authUser.id,
+            username: authUser.user_metadata?.username || 'player',
+            display_name: authUser.user_metadata?.display_name || 'Gamer',
+            fortnite_username: authUser.user_metadata?.fortnite_username || '',
+            avatar_url: authUser.user_metadata?.avatar_url || `https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${authUser.id}`,
+            banner_url: authUser.user_metadata?.banner_url || '',
+            bio: authUser.user_metadata?.bio || '',
+            is_verified: false,
+            follower_count: 0,
+            following_count: 0,
+          };
+          setProfile(fallbackProfile);
+        }
       }
     } catch (err) {
       console.error('Error fetching profile:', err);
@@ -64,36 +50,8 @@ export const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     const initAuth = async () => {
-      if (isConfigured) {
+      try {
         const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user) {
-          setUser(session.user);
-          await fetchProfile(session.user.id);
-        }
-      } else {
-        // Use local mock storage for instantaneous offline testing
-        const storedUser = localStorage.getItem('caisterplayz_mock_user');
-        if (storedUser) {
-          try {
-            const parsed = JSON.parse(storedUser);
-            setUser(parsed);
-            setProfile(parsed.profile);
-          } catch (e) {
-            setUser(LOCAL_MOCK_USER);
-            setProfile({ ...LOCAL_MOCK_USER.user_metadata, id: LOCAL_MOCK_USER.id, follower_count: 14200, following_count: 85 });
-          }
-        } else {
-          setUser(LOCAL_MOCK_USER);
-          setProfile({ ...LOCAL_MOCK_USER.user_metadata, id: LOCAL_MOCK_USER.id, follower_count: 14200, following_count: 85 });
-        }
-      }
-      setLoading(false);
-    };
-
-    initAuth();
-
-    if (isConfigured) {
-      const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
         if (session?.user) {
           setUser(session.user);
           await fetchProfile(session.user.id);
@@ -101,119 +59,107 @@ export const AuthProvider = ({ children }) => {
           setUser(null);
           setProfile(null);
         }
-      });
+      } catch (err) {
+        console.error('Auth initialization error:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
 
-      return () => {
-        authListener?.subscription?.unsubscribe();
-      };
-    }
-  }, [isConfigured]);
+    initAuth();
 
-  // Sign Up with EULA acceptance
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (session?.user) {
+        setUser(session.user);
+        await fetchProfile(session.user.id);
+      } else {
+        setUser(null);
+        setProfile(null);
+      }
+      setLoading(false);
+    });
+
+    return () => {
+      authListener?.subscription?.unsubscribe();
+    };
+  }, []);
+
+  // Real Sign Up with Supabase Auth
   const signUp = async ({ email, password, username, displayName, fortniteUsername }) => {
-    if (!isConfigured) {
-      const newUser = {
-        id: `usr_${Date.now()}`,
-        email,
-        user_metadata: {
-          username: username.toLowerCase(),
-          display_name: displayName || username,
-          fortnite_username: fortniteUsername || '',
-          avatar_url: `https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${username}`,
-          banner_url: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?w=1200&h=400&fit=crop',
-          bio: 'Fortnite gaming enthusiast.',
-          is_verified: false,
-        },
-      };
-      const newProfile = {
-        ...newUser.user_metadata,
-        id: newUser.id,
-        follower_count: 0,
-        following_count: 0,
-      };
-      newUser.profile = newProfile;
-      localStorage.setItem('caisterplayz_mock_user', JSON.stringify(newUser));
-      setUser(newUser);
-      setProfile(newProfile);
-      return { user: newUser, error: null };
-    }
-
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
         data: {
-          username: username.toLowerCase(),
-          display_name: displayName || username,
-          fortnite_username: fortniteUsername || '',
+          username: username.toLowerCase().trim(),
+          display_name: displayName?.trim() || username.trim(),
+          fortnite_username: fortniteUsername?.trim() || '',
+          avatar_url: `https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${username.trim()}`,
         },
       },
     });
+
+    if (error) {
+      return { user: null, error };
+    }
 
     if (data?.user) {
       setUser(data.user);
       await fetchProfile(data.user.id);
     }
-    return { user: data?.user, error };
+    return { user: data?.user, error: null };
   };
 
-  // Sign In
+  // Real Sign In with Supabase Auth
   const signIn = async (email, password) => {
-    if (!isConfigured) {
-      setUser(LOCAL_MOCK_USER);
-      setProfile({ ...LOCAL_MOCK_USER.user_metadata, id: LOCAL_MOCK_USER.id, follower_count: 14200, following_count: 85 });
-      return { user: LOCAL_MOCK_USER, error: null };
-    }
-
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
 
+    if (error) {
+      return { user: null, error };
+    }
+
     if (data?.user) {
       setUser(data.user);
       await fetchProfile(data.user.id);
     }
-    return { user: data?.user, error };
+    return { user: data?.user, error: null };
   };
 
-  // Sign Out
+  // Real Sign Out
   const signOut = async () => {
-    if (isConfigured) {
-      await supabase.auth.signOut();
-    } else {
-      localStorage.removeItem('caisterplayz_mock_user');
-    }
+    await supabase.auth.signOut();
     setUser(null);
     setProfile(null);
   };
 
-  // Edit Profile
+  // Real Profile Update in Supabase
   const updateProfile = async (updates) => {
-    if (!profile) return;
+    if (!user) return;
     const newProfile = { ...profile, ...updates, updated_at: new Date().toISOString() };
     setProfile(newProfile);
 
-    if (isConfigured) {
-      await supabase.from('profiles').update(updates).eq('id', profile.id);
-    } else {
-      if (user) {
-        user.user_metadata = { ...user.user_metadata, ...updates };
-        user.profile = newProfile;
-        localStorage.setItem('caisterplayz_mock_user', JSON.stringify(user));
-      }
+    try {
+      await supabase.from('profiles').update(updates).eq('id', user.id);
+      await supabase.auth.updateUser({
+        data: updates,
+      });
+    } catch (e) {
+      console.error('Failed to update profile:', e);
     }
   };
 
-  // Permanent Account Deletion (App Store Safety Guideline 5.1.1(v))
+  // Real Permanent Account Deletion (Apple Guideline 5.1.1(v))
   const deleteAccount = async () => {
     if (!user) return;
-    if (isConfigured) {
-      // Delete user profile and cascade all user data
+    try {
+      // Delete user's profile and cascade all related posts, comments, likes, messages
       await supabase.from('profiles').delete().eq('id', user.id);
       await supabase.auth.signOut();
-    } else {
-      localStorage.removeItem('caisterplayz_mock_user');
+    } catch (e) {
+      console.error('Failed to delete account:', e);
     }
     setUser(null);
     setProfile(null);

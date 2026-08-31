@@ -1,18 +1,42 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Settings, Trophy, ShieldCheck, Gamepad2, Award } from 'lucide-react';
 import { useAuth } from '../lib/AuthContext';
+import { supabase } from '../lib/supabase';
 import { PostCard } from './PostCard';
 
 export const ProfileView = ({ onOpenSettings, userPosts = [], onDeletePost }) => {
-  const { profile } = useAuth();
+  const { profile, user } = useAuth();
   const [activeTab, setActiveTab] = useState('posts'); // 'posts', 'achievements'
+  const [achievements, setAchievements] = useState([]);
+  const [loadingBadges, setLoadingBadges] = useState(true);
 
-  const achievements = [
-    { id: 'ach_1', title: 'Victory Royale Elite', desc: 'Achieved 100+ Crown Victories', icon: '👑', unlocked: true },
-    { id: 'ach_2', title: 'Mythic Trickshotter', desc: 'Shared 10+ sniper clips in CaisterPlayz', icon: '🎯', unlocked: true },
-    { id: 'ach_3', title: 'Community Pioneer', desc: 'Joined CaisterPlayz Season 1', icon: '⚡', unlocked: true },
-    { id: 'ach_4', title: 'Unreal Dominator', desc: 'Reached Unreal rank in competitive Battle Royale', icon: '🏆', unlocked: true },
-  ];
+  // Fetch real unlocked achievements from Supabase
+  useEffect(() => {
+    const fetchAchievements = async () => {
+      if (!user?.id) return;
+      try {
+        const { data } = await supabase
+          .from('user_achievements')
+          .select('*, achievement:achievements(*)')
+          .eq('user_id', user.id);
+
+        if (data && data.length > 0) {
+          setAchievements(data.map((ua) => ua.achievement));
+        } else {
+          setAchievements([]);
+        }
+      } catch (err) {
+        console.error('Error fetching user achievements:', err);
+      } finally {
+        setLoadingBadges(false);
+      }
+    };
+
+    fetchAchievements();
+  }, [user?.id]);
+
+  const followerCount = profile?.follower_count || 0;
+  const followingCount = profile?.following_count || 0;
 
   return (
     <div className="main-content animate-fade">
@@ -21,7 +45,9 @@ export const ProfileView = ({ onOpenSettings, userPosts = [], onDeletePost }) =>
         <div
           style={{
             height: '110px',
-            background: `url(${profile?.banner_url || 'https://images.unsplash.com/photo-1542751371-adc38448a05e?w=1200&h=400&fit=crop'}) center/cover no-repeat`,
+            background: profile?.banner_url
+              ? `url(${profile.banner_url}) center/cover no-repeat`
+              : 'linear-gradient(135deg, #1e1b4b 0%, #0f172a 100%)',
             position: 'relative',
           }}
         />
@@ -29,7 +55,7 @@ export const ProfileView = ({ onOpenSettings, userPosts = [], onDeletePost }) =>
         <div style={{ padding: '0 1.25rem 1.25rem', position: 'relative' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginTop: '-36px', marginBottom: '0.75rem' }}>
             <img
-              src={profile?.avatar_url || 'https://images.unsplash.com/photo-1566492031773-4f4e44671857?w=150&h=150&fit=crop&crop=faces'}
+              src={profile?.avatar_url || `https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${profile?.id || 'player'}`}
               alt={profile?.display_name}
               className="avatar lg"
             />
@@ -44,38 +70,40 @@ export const ProfileView = ({ onOpenSettings, userPosts = [], onDeletePost }) =>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-              <h2 style={{ fontSize: '1.25rem', fontWeight: '800' }}>{profile?.display_name || 'Caister Legend'}</h2>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: '800' }}>{profile?.display_name || 'Gamer'}</h2>
               {profile?.is_verified && <span className="verified-icon" title="Verified Creator">✓</span>}
             </div>
-            <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>@{profile?.username || 'caisterlegend'}</span>
+            <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>@{profile?.username || 'player'}</span>
             {profile?.fortnite_username && (
               <span style={{ fontSize: '0.8rem', color: 'var(--accent-cyan)', fontWeight: '600' }}>
-                🎮 Fortnite IGN: {profile.fortnite_username} (User-Provided)
+                🎮 In-Game Name: {profile.fortnite_username} (User-Provided)
               </span>
             )}
           </div>
 
-          <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginTop: '0.75rem' }}>
-            {profile?.bio || 'Competitive Fortnite gamer & creator.'}
-          </p>
+          {profile?.bio && (
+            <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginTop: '0.75rem' }}>
+              {profile.bio}
+            </p>
+          )}
 
-          {/* Stats Bar */}
+          {/* Real Stats Bar */}
           <div style={{ display: 'flex', gap: '1.5rem', marginTop: '1rem', borderTop: 'var(--border-subtle)', paddingTop: '0.75rem' }}>
             <div>
               <span style={{ fontWeight: '800', fontSize: '1rem', color: 'var(--text-primary)' }}>
-                {profile?.follower_count ? (profile.follower_count / 1000).toFixed(1) + 'K' : '14.2K'}
+                {followerCount >= 1000 ? (followerCount / 1000).toFixed(1) + 'K' : followerCount}
               </span>
               <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginLeft: '0.35rem' }}>Followers</span>
             </div>
             <div>
               <span style={{ fontWeight: '800', fontSize: '1rem', color: 'var(--text-primary)' }}>
-                {profile?.following_count || '85'}
+                {followingCount}
               </span>
               <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginLeft: '0.35rem' }}>Following</span>
             </div>
             <div>
               <span style={{ fontWeight: '800', fontSize: '1rem', color: 'var(--accent-gold)' }}>
-                4
+                {achievements.length}
               </span>
               <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginLeft: '0.35rem' }}>Badges</span>
             </div>
@@ -97,7 +125,7 @@ export const ProfileView = ({ onOpenSettings, userPosts = [], onDeletePost }) =>
           style={{ flex: 1, paddingBottom: '0.75rem', borderBottom: activeTab === 'achievements' ? '2px solid var(--accent-cyan)' : 'none' }}
           onClick={() => setActiveTab('achievements')}
         >
-          Gaming Badges (4)
+          Gaming Badges ({achievements.length})
         </button>
       </div>
 
@@ -117,13 +145,20 @@ export const ProfileView = ({ onOpenSettings, userPosts = [], onDeletePost }) =>
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-          {achievements.map((ach) => (
-            <div key={ach.id} className="card" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: '0.5rem', padding: '1rem' }}>
-              <span style={{ fontSize: '2rem' }}>{ach.icon}</span>
-              <span style={{ fontWeight: '800', fontSize: '0.85rem' }}>{ach.title}</span>
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{ach.desc}</span>
+          {achievements.length === 0 ? (
+            <div className="card" style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
+              <Trophy size={32} style={{ margin: '0 auto 0.5rem', opacity: 0.5 }} />
+              <p>Complete community challenges and share gameplay clips to earn badges!</p>
             </div>
-          ))}
+          ) : (
+            achievements.map((ach) => (
+              <div key={ach.id} className="card" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: '0.5rem', padding: '1rem' }}>
+                <span style={{ fontSize: '2rem' }}>{ach.badge_icon || '🏆'}</span>
+                <span style={{ fontWeight: '800', fontSize: '0.85rem' }}>{ach.title}</span>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{ach.description}</span>
+              </div>
+            ))
+          )}
         </div>
       )}
     </div>

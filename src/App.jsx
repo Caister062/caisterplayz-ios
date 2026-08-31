@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Home, Compass, PlusSquare, Bell, User, MessageSquare, ShieldAlert, Sparkles, Shield, Lock } from 'lucide-react';
 import { useAuth } from './lib/AuthContext';
-import { supabase, isSupabaseConfigured } from './lib/supabase';
+import { supabase } from './lib/supabase';
 import { PostCard } from './components/PostCard';
 import { CreatePostModal } from './components/CreatePostModal';
 import { DiscoverView } from './components/DiscoverView';
@@ -20,6 +20,7 @@ function App() {
   const [posts, setPosts] = useState([]);
   const [fetchingPosts, setFetchingPosts] = useState(true);
   const [blockedUsers, setBlockedUsers] = useState([]);
+  const [notifications, setNotifications] = useState([]);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [eulaModalOpen, setEulaModalOpen] = useState(false);
@@ -28,68 +29,59 @@ function App() {
   // Fetch real posts from Supabase database
   const loadPosts = async () => {
     setFetchingPosts(true);
-    if (isSupabaseConfigured()) {
-      try {
-        const { data, error } = await supabase
-          .from('posts')
-          .select('*, author:profiles(*)')
-          .order('created_at', { ascending: false });
+    try {
+      const { data, error } = await supabase
+        .from('posts')
+        .select('*, author:profiles(*)')
+        .order('created_at', { ascending: false });
 
-        if (!error && data) {
-          setPosts(data);
-        }
-      } catch (err) {
-        console.error('Failed to load posts from Supabase:', err);
+      if (!error && data) {
+        setPosts(data);
+      } else {
+        setPosts([]);
       }
-    } else {
-      // Offline fallback
-      setPosts([
-        {
-          id: 'post_1',
-          user_id: 'usr_fn_streamer',
-          content: 'Hit this crazy 250m sniper trickshot in ranked! Unreal lobby wipe! 🎯💥 #CompetitiveClips #VictoryRoyale',
-          media_type: 'image',
-          media_url: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?w=800&h=450&fit=crop',
-          like_count: 342,
-          comment_count: 18,
-          created_at: new Date(Date.now() - 3600000).toISOString(),
-          author: {
-            id: 'usr_fn_streamer',
-            display_name: 'VortexSniper',
-            username: 'vortex_sniper',
-            fortnite_username: 'VortexSnipes',
-            avatar_url: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&h=150&fit=crop',
-            is_verified: true,
-          },
-        },
-      ]);
+    } catch (err) {
+      console.error('Failed to load posts from Supabase:', err);
+      setPosts([]);
+    } finally {
+      setFetchingPosts(false);
     }
-    setFetchingPosts(false);
   };
 
+  // Fetch real notifications and real blocked users
   useEffect(() => {
-    if (user) {
+    if (user?.id) {
       loadPosts();
 
       // Load blocked users from Supabase
-      if (isSupabaseConfigured()) {
-        supabase
-          .from('blocks')
-          .select('blocked_id, blocked:profiles!blocked_id(*)')
-          .eq('blocker_id', user.id)
-          .then(({ data }) => {
-            if (data) {
-              setBlockedUsers(
-                data.map((b) => ({
-                  id: b.blocked_id,
-                  name: b.blocked?.display_name || b.blocked?.username || 'User',
-                }))
-              );
-            }
-          });
-      }
+      supabase
+        .from('blocks')
+        .select('blocked_id, blocked:profiles!blocked_id(*)')
+        .eq('blocker_id', user.id)
+        .then(({ data }) => {
+          if (data) {
+            setBlockedUsers(
+              data.map((b) => ({
+                id: b.blocked_id,
+                name: b.blocked?.display_name || b.blocked?.username || 'User',
+              }))
+            );
+          }
+        });
+
+      // Load real notifications
+      supabase
+        .from('notifications')
+        .select('*, actor:profiles!actor_id(*)')
+        .eq('recipient_id', user.id)
+        .order('created_at', { ascending: false })
+        .then(({ data }) => {
+          if (data) {
+            setNotifications(data);
+          }
+        });
     }
-  }, [user]);
+  }, [user?.id]);
 
   const triggerHaptic = async () => {
     try {
@@ -109,26 +101,21 @@ function App() {
 
   const handleDeletePost = async (postId) => {
     setPosts((prev) => prev.filter((p) => p.id !== postId));
-    if (isSupabaseConfigured()) {
-      await supabase.from('posts').delete().eq('id', postId);
-    }
+    await supabase.from('posts').delete().eq('id', postId);
   };
 
   const handleBlockUser = async (userId, userName) => {
-    if (!blockedUsers.some((b) => b.id === userId)) {
+    if (!blockedUsers.some((b) => b.id === userId) && user?.id) {
       setBlockedUsers((prev) => [...prev, { id: userId, name: userName }]);
-      if (isSupabaseConfigured() && user?.id) {
-        await supabase.from('blocks').insert({ blocker_id: user.id, blocked_id: userId });
-      }
+      await supabase.from('blocks').insert({ blocker_id: user.id, blocked_id: userId });
       alert(`Blocked @${userName}. Their posts and messages have been hidden.`);
     }
   };
 
   const handleUnblockUser = async (userId) => {
+    if (!user?.id) return;
     setBlockedUsers((prev) => prev.filter((b) => b.id !== userId));
-    if (isSupabaseConfigured() && user?.id) {
-      await supabase.from('blocks').delete().match({ blocker_id: user.id, blocked_id: userId });
-    }
+    await supabase.from('blocks').delete().match({ blocker_id: user.id, blocked_id: userId });
   };
 
   const switchTab = (tab) => {
@@ -229,7 +216,6 @@ function App() {
             aria-label="Direct Messages"
           >
             <MessageSquare size={19} color={activeTab === 'dms' ? 'var(--accent-cyan)' : 'currentColor'} />
-            <span className="icon-badge">1</span>
           </button>
         </div>
       </header>
@@ -291,20 +277,30 @@ function App() {
         <main className="main-content animate-fade">
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
             <h2 style={{ fontSize: '1.15rem', fontWeight: '800', marginBottom: '0.25rem' }}>Activity</h2>
-            <div className="card" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-              <span style={{ fontSize: '1.5rem' }}>👑</span>
-              <div>
-                <p style={{ fontSize: '0.85rem' }}><strong>VortexSniper</strong> liked your trickshot clip.</p>
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>2 hours ago</span>
+            {notifications.length === 0 ? (
+              <div className="card" style={{ textAlign: 'center', padding: '2.5rem 1rem', color: 'var(--text-muted)' }}>
+                <Bell size={32} style={{ margin: '0 auto 0.5rem', opacity: 0.5 }} />
+                <p>No new activity. Interacting with posts and players will trigger real alerts.</p>
               </div>
-            </div>
-            <div className="card" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-              <span style={{ fontSize: '1.5rem' }}>⚡</span>
-              <div>
-                <p style={{ fontSize: '0.85rem' }}><strong>MythicBuilder</strong> started following you.</p>
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Yesterday</span>
-              </div>
-            </div>
+            ) : (
+              notifications.map((n) => (
+                <div key={n.id} className="card" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                  <img
+                    src={n.actor?.avatar_url || `https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${n.actor_id}`}
+                    alt=""
+                    className="avatar sm"
+                  />
+                  <div>
+                    <p style={{ fontSize: '0.85rem' }}>
+                      <strong>{n.actor?.display_name || 'A player'}</strong> {n.type === 'like' && 'liked your post.'}{n.type === 'comment' && 'commented on your post.'}{n.type === 'follow' && 'started following you.'}
+                    </p>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                      {new Date(n.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                    </span>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </main>
       )}
