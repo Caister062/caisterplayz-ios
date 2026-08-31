@@ -4,6 +4,7 @@ import { useAuth } from '../lib/AuthContext';
 import { pb, getDatabase } from '../lib/pocketbase';
 import { uploadMediaToPocketBase } from '../lib/storage';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
+import confetti from 'canvas-confetti';
 
 export const CreatePostModal = ({ isOpen, onClose, onPostCreated }) => {
   const { user, profile } = useAuth();
@@ -106,6 +107,14 @@ export const CreatePostModal = ({ isOpen, onClose, onPostCreated }) => {
         onPostCreated(postObj);
       }
 
+      // Celebration Confetti
+      confetti({
+        particleCount: 50,
+        spread: 60,
+        origin: { y: 0.6 },
+        colors: ['#00d2ff', '#9d4edd', '#ffd60a'],
+      });
+
       triggerHaptic();
       setContent('');
       handleRemoveFile();
@@ -201,6 +210,7 @@ export const CreatePostModal = ({ isOpen, onClose, onPostCreated }) => {
                 flexDirection: 'column',
                 alignItems: 'center',
                 gap: '0.4rem',
+                transition: 'all 0.2s ease',
               }}
             >
               <UploadCloud size={28} color="var(--accent-cyan)" />

@@ -5,6 +5,7 @@ import { pb, getDatabase } from '../lib/pocketbase';
 import { ReportModal } from './ReportModal';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { Share } from '@capacitor/share';
+import confetti from 'canvas-confetti';
 
 export const PostCard = ({ post, onLikeToggle, onDelete, onBlockUser }) => {
   const { user } = useAuth();
@@ -16,6 +17,7 @@ export const PostCard = ({ post, onLikeToggle, onDelete, onBlockUser }) => {
   const [likeCount, setLikeCount] = useState(post.like_count || 0);
   const [commentCount, setCommentCount] = useState(post.comment_count || 0);
   const [reportOpen, setReportOpen] = useState(false);
+  const [animateHeart, setAnimateHeart] = useState(false);
 
   const author = post.expand?.user || post.author || {};
   const isAuthor = user?.id === (post.user || post.user_id);
@@ -57,7 +59,7 @@ export const PostCard = ({ post, onLikeToggle, onDelete, onBlockUser }) => {
     } catch (e) {}
   };
 
-  const handleLike = async () => {
+  const handleLike = async (e) => {
     if (!user?.id) return;
     triggerHaptic(ImpactStyle.Medium);
 
@@ -66,10 +68,45 @@ export const PostCard = ({ post, onLikeToggle, onDelete, onBlockUser }) => {
     const newCount = nextState ? likeCount + 1 : Math.max(likeCount - 1, 0);
     setLikeCount(newCount);
 
+    if (nextState) {
+      setAnimateHeart(true);
+      setTimeout(() => setAnimateHeart(false), 500);
+
+      // Micro particle burst on like
+      if (e?.clientX && e?.clientY) {
+        confetti({
+          particleCount: 20,
+          spread: 45,
+          origin: {
+            x: e.clientX / window.innerWidth,
+            y: e.clientY / window.innerHeight,
+          },
+          colors: ['#00d2ff', '#9d4edd', '#ff3b30', '#ffd60a'],
+          ticks: 120,
+          gravity: 1.2,
+          scalar: 0.7,
+        });
+      }
+    }
+
     try {
       const db = await getDatabase();
       if (nextState) {
         await db.put('likes', { id: `like_${post.id}_${user.id}`, post: post.id, user: user.id });
+
+        // Record real notification for the post author if it's someone else
+        const postAuthorId = post.user || author.id;
+        if (postAuthorId && postAuthorId !== user.id) {
+          await db.put('notifications', {
+            id: `notif_like_${Date.now()}_${user.id}`,
+            recipient: postAuthorId,
+            type: 'like',
+            actor_id: user.id,
+            actor_name: user.name || user.username || 'A player',
+            actor_avatar: user.avatar_url || '',
+            created: new Date().toISOString(),
+          });
+        }
       } else {
         await db.delete('likes', `like_${post.id}_${user.id}`);
       }
@@ -109,6 +146,20 @@ export const PostCard = ({ post, onLikeToggle, onDelete, onBlockUser }) => {
 
       const db = await getDatabase();
       await db.put('comments', commObj);
+
+      // Record real notification for the post author
+      const postAuthorId = post.user || author.id;
+      if (postAuthorId && postAuthorId !== user.id) {
+        await db.put('notifications', {
+          id: `notif_comm_${Date.now()}_${user.id}`,
+          recipient: postAuthorId,
+          type: 'comment',
+          actor_id: user.id,
+          actor_name: user.name || user.username || 'A player',
+          actor_avatar: user.avatar_url || '',
+          created: new Date().toISOString(),
+        });
+      }
 
       setComments((prev) => [...prev, commObj]);
       const newCommentCount = commentCount + 1;
@@ -255,7 +306,7 @@ export const PostCard = ({ post, onLikeToggle, onDelete, onBlockUser }) => {
 
       {/* Media (Images & Clips) */}
       {mediaUrl && (
-        <div className="post-media-container">
+        <div className="post-media-container" onDoubleClick={handleLike}>
           {post.media_type === 'video' ? (
             <video src={mediaUrl} controls playsInline preload="metadata" />
           ) : (
@@ -268,7 +319,7 @@ export const PostCard = ({ post, onLikeToggle, onDelete, onBlockUser }) => {
       <div className="post-footer">
         <div className="action-row">
           <button
-            className={`feed-action-btn ${isLiked ? 'liked' : ''}`}
+            className={`feed-action-btn ${isLiked ? 'liked' : ''} ${animateHeart ? 'animate-heart-pop' : ''}`}
             onClick={handleLike}
             aria-label="Like post"
           >
@@ -320,7 +371,7 @@ export const PostCard = ({ post, onLikeToggle, onDelete, onBlockUser }) => {
               comments.map((comm) => {
                 const commAuthor = comm.author || comm.expand?.user || {};
                 return (
-                  <div key={comm.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', background: 'var(--bg-input)', padding: '0.5rem 0.75rem', borderRadius: '10px' }}>
+                  <div key={comm.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', background: 'var(--bg-input)', padding: '0.5rem 0.75rem', borderRadius: '10px' }} className="animate-fade">
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
                       <img
                         src={commAuthor.avatar_url || `https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${comm.user}`}

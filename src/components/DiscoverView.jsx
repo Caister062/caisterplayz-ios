@@ -3,6 +3,7 @@ import { Search, UserPlus, UserCheck, Flame } from 'lucide-react';
 import { useAuth } from '../lib/AuthContext';
 import { pb, getDatabase } from '../lib/pocketbase';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
+import confetti from 'canvas-confetti';
 
 export const DiscoverView = ({ onSelectPlayer }) => {
   const { user } = useAuth();
@@ -48,7 +49,7 @@ export const DiscoverView = ({ onSelectPlayer }) => {
     } catch (e) {}
   };
 
-  const handleFollowToggle = async (playerId) => {
+  const handleFollowToggle = async (playerId, e) => {
     if (!user?.id) return;
     triggerHaptic();
 
@@ -60,6 +61,18 @@ export const DiscoverView = ({ onSelectPlayer }) => {
       [playerId]: nextState,
     }));
 
+    if (nextState && e?.clientX && e?.clientY) {
+      confetti({
+        particleCount: 15,
+        spread: 40,
+        origin: {
+          x: e.clientX / window.innerWidth,
+          y: e.clientY / window.innerHeight,
+        },
+        colors: ['#00d2ff', '#10b981'],
+      });
+    }
+
     try {
       const db = await getDatabase();
       if (nextState) {
@@ -67,6 +80,17 @@ export const DiscoverView = ({ onSelectPlayer }) => {
           id: `fol_${user.id}_${playerId}`,
           follower: user.id,
           following: playerId,
+        });
+
+        // Record real notification for the followed user
+        await db.put('notifications', {
+          id: `notif_fol_${Date.now()}_${user.id}`,
+          recipient: playerId,
+          type: 'follow',
+          actor_id: user.id,
+          actor_name: user.name || user.username || 'A player',
+          actor_avatar: user.avatar_url || '',
+          created: new Date().toISOString(),
         });
 
         // Update target player follower count
@@ -126,6 +150,7 @@ export const DiscoverView = ({ onSelectPlayer }) => {
               whiteSpace: 'nowrap',
               color: 'var(--accent-cyan)',
               cursor: 'pointer',
+              transition: 'all 0.2s ease',
             }}
           >
             {tag}
@@ -176,7 +201,7 @@ export const DiscoverView = ({ onSelectPlayer }) => {
                   <button
                     className={`btn ${isFollowing ? 'btn-secondary' : 'btn-primary'}`}
                     style={{ padding: '0.4rem 0.9rem', fontSize: '0.8rem', minHeight: '36px' }}
-                    onClick={() => handleFollowToggle(player.id)}
+                    onClick={(e) => handleFollowToggle(player.id, e)}
                   >
                     {isFollowing ? (
                       <>
