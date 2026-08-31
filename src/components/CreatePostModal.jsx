@@ -1,67 +1,126 @@
-import React, { useState } from 'react';
-import { Image, Video, Sparkles, X } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { Image, Video, Sparkles, X, UploadCloud, AlertCircle } from 'lucide-react';
 import { useAuth } from '../lib/AuthContext';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { uploadMediaToSupabase } from '../lib/storage';
+import { Haptics, ImpactStyle } from '@capacitor/haptics';
 
 export const CreatePostModal = ({ isOpen, onClose, onPostCreated }) => {
   const { user, profile } = useAuth();
   const [content, setContent] = useState('');
-  const [mediaUrl, setMediaUrl] = useState('');
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState('');
   const [mediaType, setMediaType] = useState('none'); // 'none', 'image', 'video'
-  const [submitting, setSubmitting] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [errorMsg, setErrorMsg] = useState('');
+
+  const fileInputRef = useRef(null);
 
   if (!isOpen) return null;
 
+  const triggerHaptic = async () => {
+    try {
+      await Haptics.impact({ style: ImpactStyle.Light });
+    } catch (e) {}
+  };
+
+  const handleFileChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Check size limit: 50MB
+    if (file.size > 50 * 1024 * 1024) {
+      setErrorMsg('File too large. Maximum size is 50MB.');
+      return;
+    }
+
+    setErrorMsg('');
+    setSelectedFile(file);
+    const isVideo = file.type.startsWith('video');
+    setMediaType(isVideo ? 'video' : 'image');
+    setPreviewUrl(URL.createObjectURL(file));
+    triggerHaptic();
+  };
+
+  const handleRemoveFile = () => {
+    setSelectedFile(null);
+    setPreviewUrl('');
+    setMediaType('none');
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!content.trim()) return;
+    if (!content.trim() || uploading) return;
 
-    setSubmitting(true);
+    setUploading(true);
+    setErrorMsg('');
 
-    const newPost = {
-      id: `post_${Date.now()}`,
-      user_id: user?.id,
-      content: content.trim(),
-      media_type: mediaUrl.trim() ? mediaType : 'none',
-      media_url: mediaUrl.trim() || '',
-      like_count: 0,
-      comment_count: 0,
-      share_count: 0,
-      created_at: new Date().toISOString(),
-      author: {
-        id: user?.id,
-        display_name: profile?.display_name || 'Gamer',
-        username: profile?.username || 'player',
-        avatar_url: profile?.avatar_url || 'https://api.dicebear.com/7.x/bottts-neutral/svg?seed=user',
-        fortnite_username: profile?.fortnite_username || '',
-        is_verified: profile?.is_verified || false,
-      },
-      comments: [],
-      is_liked: false,
-    };
+    try {
+      let finalMediaUrl = '';
 
-    if (isSupabaseConfigured()) {
-      const { data, error } = await supabase.from('posts').insert({
-        user_id: user?.id,
-        content: newPost.content,
-        media_type: newPost.media_type,
-        media_url: newPost.media_url,
-      }).select().single();
-
-      if (!error && data) {
-        newPost.id = data.id;
+      // Upload file to Supabase Storage if present
+      if (selectedFile) {
+        setUploadProgress(30);
+        const { url, error } = await uploadMediaToSupabase(selectedFile, 'posts', user?.id || 'guest');
+        if (error) {
+          throw new Error('Media upload failed: ' + error.message);
+        }
+        finalMediaUrl = url;
+        setUploadProgress(70);
       }
-    }
 
-    if (onPostCreated) {
-      onPostCreated(newPost);
-    }
+      // Create Post record in Supabase Database
+      const postData = {
+        user_id: user?.id,
+        content: content.trim(),
+        media_type: selectedFile ? mediaType : 'none',
+        media_url: finalMediaUrl,
+        like_count: 0,
+        comment_count: 0,
+        share_count: 0,
+      };
 
-    setSubmitting(false);
-    setContent('');
-    setMediaUrl('');
-    setMediaType('none');
-    onClose();
+      if (isSupabaseConfigured()) {
+        const { data, error } = await supabase
+          .from('posts')
+          .insert(postData)
+          .select('*, author:profiles(*)')
+          .single();
+
+        if (error) throw error;
+        if (onPostCreated) onPostCreated(data);
+      } else {
+        // Optimistic local state for immediate feedback
+        const mockPost = {
+          ...postData,
+          id: `post_${Date.now()}`,
+          created_at: new Date().toISOString(),
+          author: profile || {
+            id: user?.id,
+            display_name: 'Gamer',
+            username: 'player',
+            avatar_url: 'https://api.dicebear.com/7.x/bottts-neutral/svg?seed=gamer',
+            is_verified: false,
+          },
+          comments: [],
+          is_liked: false,
+        };
+        if (onPostCreated) onPostCreated(mockPost);
+      }
+
+      triggerHaptic();
+      setContent('');
+      handleRemoveFile();
+      onClose();
+    } catch (err) {
+      console.error('Post creation error:', err);
+      setErrorMsg(err.message || 'Failed to publish post.');
+    } finally {
+      setUploading(false);
+      setUploadProgress(0);
+    }
   };
 
   return (
@@ -77,11 +136,31 @@ export const CreatePostModal = ({ isOpen, onClose, onPostCreated }) => {
           </button>
         </div>
 
+        {errorMsg && (
+          <div
+            style={{
+              background: 'rgba(255, 59, 48, 0.15)',
+              border: '1px solid var(--accent-red)',
+              borderRadius: '10px',
+              padding: '0.65rem 0.85rem',
+              color: 'var(--accent-red)',
+              fontSize: '0.85rem',
+              marginBottom: '1rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+            }}
+          >
+            <AlertCircle size={16} />
+            <span>{errorMsg}</span>
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           <textarea
             className="input"
             rows={4}
-            placeholder="Share your victory royale, trickshot, clutch play, or loadout tip! ⚡"
+            placeholder="Share a victory clip, trickshot, clutch play, or loadout tip! ⚡"
             value={content}
             onChange={(e) => setContent(e.target.value)}
             maxLength={1000}
@@ -89,37 +168,67 @@ export const CreatePostModal = ({ isOpen, onClose, onPostCreated }) => {
             autoFocus
           />
 
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <button
-              type="button"
-              className={`btn ${mediaType === 'image' ? 'btn-primary' : 'btn-secondary'}`}
-              style={{ flex: 1, padding: '0.5rem', fontSize: '0.8rem' }}
-              onClick={() => setMediaType(mediaType === 'image' ? 'none' : 'image')}
-            >
-              <Image size={16} /> Image
-            </button>
-            <button
-              type="button"
-              className={`btn ${mediaType === 'video' ? 'btn-primary' : 'btn-secondary'}`}
-              style={{ flex: 1, padding: '0.5rem', fontSize: '0.8rem' }}
-              onClick={() => setMediaType(mediaType === 'video' ? 'none' : 'video')}
-            >
-              <Video size={16} /> Gaming Clip
-            </button>
-          </div>
+          {/* Hidden File Input */}
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileChange}
+            accept="image/*,video/mp4,video/quicktime,video/webm"
+            style={{ display: 'none' }}
+          />
 
-          {mediaType !== 'none' && (
-            <div>
-              <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '0.35rem' }}>
-                {mediaType === 'image' ? 'Image URL or Upload link' : 'Video Clip URL (MP4 / WebM / QuickTime)'}
-              </label>
-              <input
-                type="url"
-                className="input"
-                placeholder="https://..."
-                value={mediaUrl}
-                onChange={(e) => setMediaUrl(e.target.value)}
-                required
+          {/* Preview Container or Picker Button */}
+          {previewUrl ? (
+            <div style={{ position: 'relative', borderRadius: '12px', overflow: 'hidden', maxHeight: '240px', background: '#000' }}>
+              {mediaType === 'video' ? (
+                <video src={previewUrl} controls playsInline style={{ width: '100%', maxHeight: '240px' }} />
+              ) : (
+                <img src={previewUrl} alt="Preview" style={{ width: '100%', maxHeight: '240px', objectFit: 'cover' }} />
+              )}
+              <button
+                type="button"
+                className="icon-btn"
+                style={{ position: 'absolute', top: '8px', right: '8px', width: '28px', height: '28px', background: 'rgba(0,0,0,0.8)' }}
+                onClick={handleRemoveFile}
+              >
+                <X size={14} />
+              </button>
+            </div>
+          ) : (
+            <div
+              onClick={() => fileInputRef.current?.click()}
+              style={{
+                border: '2px dashed rgba(0, 210, 255, 0.3)',
+                borderRadius: '12px',
+                padding: '1.25rem',
+                textAlign: 'center',
+                cursor: 'pointer',
+                background: 'var(--bg-input)',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: '0.4rem',
+              }}
+            >
+              <UploadCloud size={28} color="var(--accent-cyan)" />
+              <span style={{ fontSize: '0.85rem', fontWeight: '700' }}>
+                Tap to Pick Photo or Gameplay Clip
+              </span>
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                PNG, JPG, MP4, MOV up to 50MB
+              </span>
+            </div>
+          )}
+
+          {uploading && (
+            <div style={{ width: '100%', background: 'var(--bg-input)', borderRadius: '8px', height: '6px', overflow: 'hidden' }}>
+              <div
+                style={{
+                  width: `${uploadProgress || 50}%`,
+                  height: '100%',
+                  background: 'var(--gradient-storm)',
+                  transition: 'width 0.3s ease',
+                }}
               />
             </div>
           )}
@@ -128,8 +237,8 @@ export const CreatePostModal = ({ isOpen, onClose, onPostCreated }) => {
             <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
               {content.length}/1000 characters
             </span>
-            <button type="submit" className="btn btn-primary" disabled={!content.trim() || submitting}>
-              {submitting ? 'Dropping...' : 'Post to Storm ⚡'}
+            <button type="submit" className="btn btn-primary" disabled={!content.trim() || uploading}>
+              {uploading ? 'Uploading to Supabase...' : 'Post to Feed ⚡'}
             </button>
           </div>
         </form>

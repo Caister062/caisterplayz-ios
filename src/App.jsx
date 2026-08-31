@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Home, Compass, PlusSquare, Bell, User, MessageSquare, ShieldAlert, Sparkles, Shield, Lock } from 'lucide-react';
 import { useAuth } from './lib/AuthContext';
+import { supabase, isSupabaseConfigured } from './lib/supabase';
 import { PostCard } from './components/PostCard';
 import { CreatePostModal } from './components/CreatePostModal';
 import { DiscoverView } from './components/DiscoverView';
@@ -8,77 +9,93 @@ import { ProfileView } from './components/ProfileView';
 import { DirectMessagesView } from './components/DirectMessagesView';
 import { SettingsSafetyModal } from './components/SettingsSafetyModal';
 import { AuthScreen } from './components/AuthScreen';
-import { ReportModal } from './components/ReportModal';
+import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import './index.css';
-
-// Initial verified gaming community posts
-const INITIAL_POSTS = [
-  {
-    id: 'post_1',
-    user_id: 'usr_fn_streamer',
-    content: 'Hit this crazy 250m mythic sniper trickshot off the launchpad in Chapter 5 ranked! Unreal lobby wipe! 🎯💥 #FortniteRanked #VictoryRoyale',
-    media_type: 'image',
-    media_url: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?w=800&h=450&fit=crop',
-    like_count: 342,
-    comment_count: 18,
-    share_count: 14,
-    created_at: new Date(Date.now() - 3600000).toISOString(),
-    author: {
-      id: 'usr_fn_streamer',
-      display_name: 'VortexSniper',
-      username: 'vortex_sniper',
-      fortnite_username: 'VortexSnipes',
-      avatar_url: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&h=150&fit=crop',
-      is_verified: true,
-    },
-    comments: [
-      {
-        id: 'c1',
-        post_id: 'post_1',
-        user_id: 'usr_mythic_builder',
-        content: 'That tracking was insane! What DPI/sensitivity do you play on?',
-        author: {
-          display_name: 'MythicBuilder',
-          avatar_url: 'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?w=150&h=150&fit=crop',
-        },
-      },
-    ],
-    is_liked: false,
-  },
-  {
-    id: 'post_2',
-    user_id: 'usr_mythic_builder',
-    content: 'Just published our brand new 1v1 Zero Build Arena in UEFN! Map code: 8291-3920-1928. Let me know what weapon loadouts you want added! 🛠️🎮',
-    media_type: 'image',
-    media_url: 'https://images.unsplash.com/photo-1511512578047-dfb367046420?w=800&h=450&fit=crop',
-    like_count: 189,
-    comment_count: 24,
-    share_count: 9,
-    created_at: new Date(Date.now() - 7200000).toISOString(),
-    author: {
-      id: 'usr_mythic_builder',
-      display_name: 'MythicBuilder',
-      username: 'mythic_builder',
-      fortnite_username: 'MythicBuilds99',
-      avatar_url: 'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?w=150&h=150&fit=crop',
-      is_verified: false,
-    },
-    comments: [],
-    is_liked: true,
-  },
-];
 
 function App() {
   const { user, profile, loading } = useAuth();
 
   // Tab State
   const [activeTab, setActiveTab] = useState('feed'); // 'feed', 'discover', 'create', 'notifications', 'profile', 'dms'
-  const [posts, setPosts] = useState(INITIAL_POSTS);
+  const [posts, setPosts] = useState([]);
+  const [fetchingPosts, setFetchingPosts] = useState(true);
   const [blockedUsers, setBlockedUsers] = useState([]);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [eulaModalOpen, setEulaModalOpen] = useState(false);
   const [privacyModalOpen, setPrivacyModalOpen] = useState(false);
+
+  // Fetch real posts from Supabase database
+  const loadPosts = async () => {
+    setFetchingPosts(true);
+    if (isSupabaseConfigured()) {
+      try {
+        const { data, error } = await supabase
+          .from('posts')
+          .select('*, author:profiles(*)')
+          .order('created_at', { ascending: false });
+
+        if (!error && data) {
+          setPosts(data);
+        }
+      } catch (err) {
+        console.error('Failed to load posts from Supabase:', err);
+      }
+    } else {
+      // Offline fallback
+      setPosts([
+        {
+          id: 'post_1',
+          user_id: 'usr_fn_streamer',
+          content: 'Hit this crazy 250m sniper trickshot in ranked! Unreal lobby wipe! 🎯💥 #CompetitiveClips #VictoryRoyale',
+          media_type: 'image',
+          media_url: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?w=800&h=450&fit=crop',
+          like_count: 342,
+          comment_count: 18,
+          created_at: new Date(Date.now() - 3600000).toISOString(),
+          author: {
+            id: 'usr_fn_streamer',
+            display_name: 'VortexSniper',
+            username: 'vortex_sniper',
+            fortnite_username: 'VortexSnipes',
+            avatar_url: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&h=150&fit=crop',
+            is_verified: true,
+          },
+        },
+      ]);
+    }
+    setFetchingPosts(false);
+  };
+
+  useEffect(() => {
+    if (user) {
+      loadPosts();
+
+      // Load blocked users from Supabase
+      if (isSupabaseConfigured()) {
+        supabase
+          .from('blocks')
+          .select('blocked_id, blocked:profiles!blocked_id(*)')
+          .eq('blocker_id', user.id)
+          .then(({ data }) => {
+            if (data) {
+              setBlockedUsers(
+                data.map((b) => ({
+                  id: b.blocked_id,
+                  name: b.blocked?.display_name || b.blocked?.username || 'User',
+                }))
+              );
+            }
+          });
+      }
+    }
+  }, [user]);
+
+  const triggerHaptic = async () => {
+    try {
+      await Haptics.impact({ style: ImpactStyle.Light });
+    } catch (e) {}
+  };
 
   // Filter posts from blocked accounts
   const visiblePosts = posts.filter(
@@ -90,19 +107,33 @@ function App() {
     setActiveTab('feed');
   };
 
-  const handleDeletePost = (postId) => {
+  const handleDeletePost = async (postId) => {
     setPosts((prev) => prev.filter((p) => p.id !== postId));
+    if (isSupabaseConfigured()) {
+      await supabase.from('posts').delete().eq('id', postId);
+    }
   };
 
-  const handleBlockUser = (userId, userName) => {
+  const handleBlockUser = async (userId, userName) => {
     if (!blockedUsers.some((b) => b.id === userId)) {
       setBlockedUsers((prev) => [...prev, { id: userId, name: userName }]);
+      if (isSupabaseConfigured() && user?.id) {
+        await supabase.from('blocks').insert({ blocker_id: user.id, blocked_id: userId });
+      }
       alert(`Blocked @${userName}. Their posts and messages have been hidden.`);
     }
   };
 
-  const handleUnblockUser = (userId) => {
+  const handleUnblockUser = async (userId) => {
     setBlockedUsers((prev) => prev.filter((b) => b.id !== userId));
+    if (isSupabaseConfigured() && user?.id) {
+      await supabase.from('blocks').delete().match({ blocker_id: user.id, blocked_id: userId });
+    }
+  };
+
+  const switchTab = (tab) => {
+    triggerHaptic();
+    setActiveTab(tab);
   };
 
   if (loading) {
@@ -116,7 +147,6 @@ function App() {
     );
   }
 
-  // If not authenticated, show modern Auth Screen
   if (!user) {
     return (
       <>
@@ -124,7 +154,6 @@ function App() {
           onOpenEULA={() => setEulaModalOpen(true)}
           onOpenPrivacy={() => setPrivacyModalOpen(true)}
         />
-        {/* Legal Modals */}
         {renderLegalModals()}
       </>
     );
@@ -133,7 +162,6 @@ function App() {
   function renderLegalModals() {
     return (
       <>
-        {/* EULA & Terms Modal */}
         {eulaModalOpen && (
           <div className="modal-overlay" onClick={() => setEulaModalOpen(false)}>
             <div className="modal-sheet animate-fade" onClick={(e) => e.stopPropagation()}>
@@ -159,7 +187,6 @@ function App() {
           </div>
         )}
 
-        {/* Privacy Policy Modal */}
         {privacyModalOpen && (
           <div className="modal-overlay" onClick={() => setPrivacyModalOpen(false)}>
             <div className="modal-sheet animate-fade" onClick={(e) => e.stopPropagation()}>
@@ -189,7 +216,6 @@ function App() {
 
   return (
     <>
-      {/* Top iOS Navigation Bar */}
       <header className="app-header">
         <div className="brand-title">
           <span>CaisterPlayz</span>
@@ -199,7 +225,7 @@ function App() {
         <div className="header-actions">
           <button
             className="icon-btn"
-            onClick={() => setActiveTab(activeTab === 'dms' ? 'feed' : 'dms')}
+            onClick={() => switchTab(activeTab === 'dms' ? 'feed' : 'dms')}
             aria-label="Direct Messages"
           >
             <MessageSquare size={19} color={activeTab === 'dms' ? 'var(--accent-cyan)' : 'currentColor'} />
@@ -208,24 +234,39 @@ function App() {
         </div>
       </header>
 
-      {/* Main View Router */}
       {activeTab === 'feed' && (
         <main className="main-content animate-fade">
-          {/* Trademark Disclaimer Notice */}
           <div className="disclaimer-banner">
             <ShieldAlert size={18} color="var(--accent-purple)" style={{ flexShrink: 0 }} />
             <span>Independent gaming platform. Not affiliated with or endorsed by Epic Games.</span>
           </div>
 
-          {/* Social Posts Feed */}
-          {visiblePosts.map((post) => (
-            <PostCard
-              key={post.id}
-              post={post}
-              onDelete={handleDeletePost}
-              onBlockUser={handleBlockUser}
-            />
-          ))}
+          {fetchingPosts ? (
+            <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
+              Loading gaming feed...
+            </div>
+          ) : visiblePosts.length === 0 ? (
+            <div className="card" style={{ textAlign: 'center', padding: '3rem 1.5rem', color: 'var(--text-muted)' }}>
+              <h3>No posts yet!</h3>
+              <p style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}>Be the first to share your gameplay moment with the community.</p>
+              <button
+                className="btn btn-primary"
+                style={{ marginTop: '1.25rem' }}
+                onClick={() => setCreateModalOpen(true)}
+              >
+                Create First Post ⚡
+              </button>
+            </div>
+          ) : (
+            visiblePosts.map((post) => (
+              <PostCard
+                key={post.id}
+                post={post}
+                onDelete={handleDeletePost}
+                onBlockUser={handleBlockUser}
+              />
+            ))
+          )}
         </main>
       )}
 
@@ -241,7 +282,7 @@ function App() {
 
       {activeTab === 'dms' && (
         <DirectMessagesView
-          onBack={() => setActiveTab('feed')}
+          onBack={() => switchTab('feed')}
           onBlockUser={handleBlockUser}
         />
       )}
@@ -268,11 +309,10 @@ function App() {
         </main>
       )}
 
-      {/* iOS Bottom Tab Bar */}
       <nav className="bottom-tab-bar" aria-label="Main Navigation">
         <button
           className={`tab-item ${activeTab === 'feed' ? 'active' : ''}`}
-          onClick={() => setActiveTab('feed')}
+          onClick={() => switchTab('feed')}
         >
           <Home size={22} />
           <span>Feed</span>
@@ -280,7 +320,7 @@ function App() {
 
         <button
           className={`tab-item ${activeTab === 'discover' ? 'active' : ''}`}
-          onClick={() => setActiveTab('discover')}
+          onClick={() => switchTab('discover')}
         >
           <Compass size={22} />
           <span>Discover</span>
@@ -288,7 +328,10 @@ function App() {
 
         <button
           className="tab-item create-btn"
-          onClick={() => setCreateModalOpen(true)}
+          onClick={() => {
+            triggerHaptic();
+            setCreateModalOpen(true);
+          }}
           aria-label="Create Post"
         >
           <PlusSquare size={24} />
@@ -296,7 +339,7 @@ function App() {
 
         <button
           className={`tab-item ${activeTab === 'notifications' ? 'active' : ''}`}
-          onClick={() => setActiveTab('notifications')}
+          onClick={() => switchTab('notifications')}
         >
           <Bell size={22} />
           <span>Alerts</span>
@@ -304,21 +347,19 @@ function App() {
 
         <button
           className={`tab-item ${activeTab === 'profile' ? 'active' : ''}`}
-          onClick={() => setActiveTab('profile')}
+          onClick={() => switchTab('profile')}
         >
           <User size={22} />
           <span>Profile</span>
         </button>
       </nav>
 
-      {/* Post Creator Modal */}
       <CreatePostModal
         isOpen={createModalOpen}
         onClose={() => setCreateModalOpen(false)}
         onPostCreated={handlePostCreated}
       />
 
-      {/* Settings & Safety Modal */}
       <SettingsSafetyModal
         isOpen={settingsModalOpen}
         onClose={() => setSettingsModalOpen(false)}
@@ -328,7 +369,6 @@ function App() {
         onUnblock={handleUnblockUser}
       />
 
-      {/* Legal Modals */}
       {renderLegalModals()}
     </>
   );

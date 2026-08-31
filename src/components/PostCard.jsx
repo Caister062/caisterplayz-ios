@@ -1,33 +1,79 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Heart, MessageCircle, Share2, MoreHorizontal, Flag, UserX, Trash2 } from 'lucide-react';
 import { useAuth } from '../lib/AuthContext';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { ReportModal } from './ReportModal';
+import { Haptics, ImpactStyle } from '@capacitor/haptics';
+import { Share } from '@capacitor/share';
 
 export const PostCard = ({ post, onLikeToggle, onDelete, onBlockUser }) => {
   const { user } = useAuth();
   const [showMenu, setShowMenu] = useState(false);
   const [showComments, setShowComments] = useState(false);
-  const [comments, setComments] = useState(post.comments || []);
+  const [comments, setComments] = useState([]);
   const [newComment, setNewComment] = useState('');
-  const [isLiked, setIsLiked] = useState(post.is_liked || false);
+  const [isLiked, setIsLiked] = useState(false);
   const [likeCount, setLikeCount] = useState(post.like_count || 0);
+  const [commentCount, setCommentCount] = useState(post.comment_count || 0);
   const [reportOpen, setReportOpen] = useState(false);
 
   const isAuthor = user?.id === post.user_id;
 
+  // Load real comments & like state from Supabase
+  useEffect(() => {
+    const fetchPostDetails = async () => {
+      if (!isSupabaseConfigured()) {
+        setComments(post.comments || []);
+        setIsLiked(post.is_liked || false);
+        return;
+      }
+
+      // Check if current user liked this post
+      if (user?.id) {
+        const { data: likeData } = await supabase
+          .from('likes')
+          .select('id')
+          .match({ user_id: user.id, post_id: post.id })
+          .maybeSingle();
+
+        setIsLiked(!!likeData);
+      }
+
+      // Fetch latest comments
+      const { data: commentsData } = await supabase
+        .from('comments')
+        .select('*, author:profiles(*)')
+        .eq('post_id', post.id)
+        .order('created_at', { ascending: true });
+
+      if (commentsData) {
+        setComments(commentsData);
+        setCommentCount(commentsData.length);
+      }
+    };
+
+    fetchPostDetails();
+  }, [post.id, user?.id]);
+
+  const triggerHaptic = async (style = ImpactStyle.Light) => {
+    try {
+      await Haptics.impact({ style });
+    } catch (e) {}
+  };
+
   const handleLike = async () => {
+    triggerHaptic(ImpactStyle.Medium);
     const nextState = !isLiked;
     setIsLiked(nextState);
     setLikeCount((prev) => (nextState ? prev + 1 : Math.max(prev - 1, 0)));
 
     if (onLikeToggle) onLikeToggle(post.id, nextState);
 
-    if (isSupabaseConfigured()) {
+    if (isSupabaseConfigured() && user?.id) {
       if (nextState) {
-        await supabase.from('likes').insert({ user_id: user?.id, post_id: post.id });
+        await supabase.from('likes').insert({ user_id: user.id, post_id: post.id });
       } else {
-        await supabase.from('likes').delete().match({ user_id: user?.id, post_id: post.id });
+        await supabase.from('likes').delete().match({ user_id: user.id, post_id: post.id });
       }
     }
   };
@@ -36,54 +82,76 @@ export const PostCard = ({ post, onLikeToggle, onDelete, onBlockUser }) => {
     e.preventDefault();
     if (!newComment.trim()) return;
 
-    const commentObj = {
-      id: `comm_${Date.now()}`,
-      post_id: post.id,
-      user_id: user?.id,
-      author: {
-        id: user?.id,
-        display_name: user?.user_metadata?.display_name || 'You',
-        username: user?.user_metadata?.username || 'player',
-        avatar_url: user?.user_metadata?.avatar_url || 'https://api.dicebear.com/7.x/bottts-neutral/svg?seed=user',
-        is_verified: user?.user_metadata?.is_verified || false,
-      },
-      content: newComment.trim(),
-      created_at: new Date().toISOString(),
-    };
+    triggerHaptic();
 
-    setComments((prev) => [...prev, commentObj]);
+    const commentText = newComment.trim();
     setNewComment('');
 
-    if (isSupabaseConfigured()) {
-      await supabase.from('comments').insert({
+    if (isSupabaseConfigured() && user?.id) {
+      const { data, error } = await supabase
+        .from('comments')
+        .insert({
+          post_id: post.id,
+          user_id: user.id,
+          content: commentText,
+        })
+        .select('*, author:profiles(*)')
+        .single();
+
+      if (data) {
+        setComments((prev) => [...prev, data]);
+        setCommentCount((prev) => prev + 1);
+      }
+    } else {
+      const localComm = {
+        id: `comm_${Date.now()}`,
         post_id: post.id,
         user_id: user?.id,
-        content: commentObj.content,
-      });
+        content: commentText,
+        created_at: new Date().toISOString(),
+        author: {
+          display_name: user?.user_metadata?.display_name || 'You',
+          username: user?.user_metadata?.username || 'player',
+          avatar_url: user?.user_metadata?.avatar_url || 'https://api.dicebear.com/7.x/bottts-neutral/svg?seed=user',
+        },
+      };
+      setComments((prev) => [...prev, localComm]);
+      setCommentCount((prev) => prev + 1);
     }
   };
 
   const handleDeleteComment = async (commentId) => {
+    triggerHaptic();
     setComments((prev) => prev.filter((c) => c.id !== commentId));
+    setCommentCount((prev) => Math.max(prev - 1, 0));
+
     if (isSupabaseConfigured()) {
       await supabase.from('comments').delete().eq('id', commentId);
     }
   };
 
   const handleShare = async () => {
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: `Post by ${post.author?.display_name} on CaisterPlayz`,
-          text: post.content,
-          url: window.location.href,
-        });
-      } catch (err) {
-        console.log('Share dismissed');
+    triggerHaptic();
+    try {
+      await Share.share({
+        title: `Post by ${post.author?.display_name || 'Gamer'} on CaisterPlayz`,
+        text: post.content,
+        url: window.location.href,
+        dialogTitle: 'Share with squad',
+      });
+    } catch (err) {
+      if (navigator.share) {
+        try {
+          await navigator.share({
+            title: `Post by ${post.author?.display_name || 'Gamer'} on CaisterPlayz`,
+            text: post.content,
+            url: window.location.href,
+          });
+        } catch (e) {}
+      } else {
+        navigator.clipboard.writeText(window.location.href);
+        alert('Post link copied to clipboard!');
       }
-    } else {
-      navigator.clipboard.writeText(window.location.href);
-      alert('Post link copied to clipboard!');
     }
   };
 
@@ -93,7 +161,7 @@ export const PostCard = ({ post, onLikeToggle, onDelete, onBlockUser }) => {
       <div className="post-header">
         <div className="author-meta">
           <img
-            src={post.author?.avatar_url || 'https://api.dicebear.com/7.x/bottts-neutral/svg?seed=author'}
+            src={post.author?.avatar_url || 'https://api.dicebear.com/7.x/bottts-neutral/svg?seed=' + (post.user_id || 'author')}
             alt={post.author?.display_name}
             className="avatar"
           />
@@ -166,7 +234,7 @@ export const PostCard = ({ post, onLikeToggle, onDelete, onBlockUser }) => {
                     style={{ width: '100%', justifyContent: 'flex-start', padding: '0.5rem', gap: '0.5rem' }}
                     onClick={() => {
                       setShowMenu(false);
-                      if (onBlockUser) onBlockUser(post.author?.id, post.author?.display_name);
+                      if (onBlockUser) onBlockUser(post.author?.id || post.user_id, post.author?.display_name);
                     }}
                   >
                     <UserX size={16} color="var(--text-muted)" /> Block User
@@ -210,7 +278,7 @@ export const PostCard = ({ post, onLikeToggle, onDelete, onBlockUser }) => {
             aria-label="Comments"
           >
             <MessageCircle size={20} />
-            <span>{comments.length}</span>
+            <span>{commentCount}</span>
           </button>
 
           <button className="feed-action-btn" onClick={handleShare} aria-label="Share">
@@ -249,7 +317,7 @@ export const PostCard = ({ post, onLikeToggle, onDelete, onBlockUser }) => {
                 <div key={comm.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', background: 'var(--bg-input)', padding: '0.5rem 0.75rem', borderRadius: '10px' }}>
                   <div style={{ display: 'flex', gap: '0.5rem' }}>
                     <img
-                      src={comm.author?.avatar_url || 'https://api.dicebear.com/7.x/bottts-neutral/svg?seed=user'}
+                      src={comm.author?.avatar_url || 'https://api.dicebear.com/7.x/bottts-neutral/svg?seed=' + (comm.user_id || 'user')}
                       alt=""
                       className="avatar sm"
                     />
