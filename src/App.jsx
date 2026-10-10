@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Home, Compass, PlusSquare, Bell, User, MessageSquare, ShieldAlert, Sparkles, Shield, Lock } from 'lucide-react';
+import { Home, Compass, PlusSquare, Bell, User, MessageSquare, ShieldAlert, Sparkles, Shield, Lock, Gamepad2, HeartHandshake } from 'lucide-react';
 import { useAuth } from './lib/AuthContext';
 import { pb, getDatabase } from './lib/pocketbase';
 import { PostCard } from './components/PostCard';
@@ -7,6 +7,7 @@ import { CreatePostModal } from './components/CreatePostModal';
 import { DiscoverView } from './components/DiscoverView';
 import { ProfileView } from './components/ProfileView';
 import { DirectMessagesView } from './components/DirectMessagesView';
+import { HangoutMultiplayerView } from './components/HangoutMultiplayerView';
 import { SettingsSafetyModal } from './components/SettingsSafetyModal';
 import { AuthScreen } from './components/AuthScreen';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
@@ -249,6 +250,8 @@ function App() {
 
       {activeTab === 'discover' && <DiscoverView />}
 
+      {activeTab === 'hangout' && <HangoutMultiplayerView />}
+
       {activeTab === 'profile' && (
         <ProfileView
           onOpenSettings={() => setSettingsModalOpen(true)}
@@ -301,16 +304,16 @@ function App() {
           className={`tab-item ${activeTab === 'feed' ? 'active' : ''}`}
           onClick={() => switchTab('feed')}
         >
-          <Home size={22} />
+          <Home size={21} />
           <span>Feed</span>
         </button>
 
         <button
-          className={`tab-item ${activeTab === 'discover' ? 'active' : ''}`}
-          onClick={() => switchTab('discover')}
+          className={`tab-item ${activeTab === 'hangout' ? 'active' : ''}`}
+          onClick={() => switchTab('hangout')}
         >
-          <Compass size={22} />
-          <span>Discover</span>
+          <Gamepad2 size={21} />
+          <span>Hangout</span>
         </button>
 
         <button
@@ -325,18 +328,18 @@ function App() {
         </button>
 
         <button
-          className={`tab-item ${activeTab === 'notifications' ? 'active' : ''}`}
-          onClick={() => switchTab('notifications')}
+          className={`tab-item ${activeTab === 'discover' ? 'active' : ''}`}
+          onClick={() => switchTab('discover')}
         >
-          <Bell size={22} />
-          <span>Alerts</span>
+          <Compass size={21} />
+          <span>Players</span>
         </button>
 
         <button
           className={`tab-item ${activeTab === 'profile' ? 'active' : ''}`}
           onClick={() => switchTab('profile')}
         >
-          <User size={22} />
+          <User size={21} />
           <span>Profile</span>
         </button>
       </nav>

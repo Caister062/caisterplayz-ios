@@ -164,7 +164,7 @@ export const CreatePostModal = ({ isOpen, onClose, onPostCreated }) => {
           <textarea
             className="input"
             rows={4}
-            placeholder="Share a victory clip, trickshot, clutch play, or loadout tip! ⚡"
+            placeholder="Post about anything! Chat, share clips, thoughts, or spread good vibes and kindness... ⚡✨"
             value={content}
             onChange={(e) => setContent(e.target.value)}
             maxLength={1000}
