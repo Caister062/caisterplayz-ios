@@ -29,13 +29,31 @@ export const ReportModal = ({ isOpen, onClose, targetType, targetId, targetName 
 
     try {
       if (user?.id) {
-        await pb.collection('reports').create({
+        if (pb) {
+          try {
+            await pb.collection('reports').create({
+              reporter: user.id,
+              target_type: targetType,
+              target_id: targetId,
+              reason: selectedReason,
+              details: details.trim(),
+              status: 'pending',
+            });
+          } catch (e) {
+            console.warn('PB report create skipped:', e);
+          }
+        }
+
+        const db = await getDatabase();
+        await db.put('reports', {
+          id: `rep_${Date.now()}_${user.id}`,
           reporter: user.id,
           target_type: targetType,
           target_id: targetId,
           reason: selectedReason,
           details: details.trim(),
           status: 'pending',
+          created: new Date().toISOString(),
         });
       }
       setSubmitted(true);
