@@ -15,7 +15,7 @@ import confetti from 'canvas-confetti';
 const BADGE_DEFINITIONS = [
   { id: 'first_post', icon: '⚡', title: 'First Drop', description: 'Published your first post or clip' },
   { id: 'friendly_gamer', icon: '🤝', title: 'Kind Vibe', description: 'Joined the Hangout Lounge' },
-  { id: 'reflex_champ', icon: '🎯', title: 'Reflex Master', description: 'Challenged the 1v1 Reflex Arena' },
+  { id: 'room_chatter', icon: '💬', title: 'Vibe Master', description: 'Active chatter in live rooms' },
   { id: 'active_creator', icon: '🔥', title: 'Content Machine', description: 'Created 3 or more gaming posts' },
   { id: 'verified_gamer', icon: '🛡️', title: 'Verified OG', description: 'Profile verified & safety aligned' },
   { id: 'community_star', icon: '⭐', title: 'Community Star', description: 'Connected with other players' },
@@ -142,7 +142,7 @@ export const ProfileView = ({ onOpenSettings, userPosts = [], onDeletePost }) =>
   const earnedBadges = BADGE_DEFINITIONS.filter((badge) => {
     if (badge.id === 'first_post') return userPosts.length > 0;
     if (badge.id === 'active_creator') return userPosts.length >= 3;
-    if (badge.id === 'friendly_gamer') return true; // Earned by default for joining the community
+    if (badge.id === 'friendly_gamer' || badge.id === 'room_chatter') return true; // Earned by default for joining the community
     if (badge.id === 'verified_gamer') return profile?.is_verified;
     if (badge.id === 'community_star') return stats.followers > 0 || stats.following > 0;
     return false;

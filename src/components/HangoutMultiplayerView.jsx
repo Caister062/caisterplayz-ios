@@ -1,8 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
-  Users, MessageSquare, Flame, Send, Sparkles, Trophy, 
-  Zap, Heart, Smile, Swords, Gamepad2, Volume2, ShieldCheck,
-  Radio, Share2, Compass, AlertCircle
+  Users, MessageSquare, Send, Radio, ShieldCheck
 } from 'lucide-react';
 import { useAuth } from '../lib/AuthContext';
 import { multiplayerManager } from '../lib/multiplayer';
@@ -16,13 +14,6 @@ const ROOM_LIST = [
     topic: 'Post about anything, chat, vibe, and be nice to everyone! 💜',
     category: 'Hangout',
     icon: '☕'
-  },
-  {
-    id: 'arena-reflex',
-    title: '⚡ 1v1 Reflex Showdown Arena',
-    topic: 'Real-time multiplayer reflex battle! Fastest tap wins score!',
-    category: 'Multiplayer Gaming',
-    icon: '⚔️'
   },
   {
     id: 'clips-and-art',
@@ -50,10 +41,6 @@ export const HangoutMultiplayerView = () => {
     reactions: []
   });
   const [chatInput, setChatInput] = useState('');
-  const [gameActive, setGameActive] = useState(false);
-  const [tapScore, setTapScore] = useState(0);
-  const [targetPos, setTargetPos] = useState({ x: 50, y: 50 });
-  const [timeLeft, setTimeLeft] = useState(15);
   const chatScrollRef = useRef(null);
 
   // Join multiplayer room
@@ -114,57 +101,6 @@ export const HangoutMultiplayerView = () => {
       origin: { y: 0.8 },
       colors: ['#00d2ff', '#9d4edd', '#ffd60a'],
       scalar: 0.8
-    });
-  };
-
-  // Real-time Reflex Game Loop
-  const startReflexGame = () => {
-    triggerHaptic(ImpactStyle.Heavy);
-    setGameActive(true);
-    setTapScore(0);
-    setTimeLeft(15);
-    setTargetPos({ x: 20 + Math.random() * 60, y: 20 + Math.random() * 60 });
-
-    multiplayerManager.updateGameState({
-      status: 'playing',
-      leaderboard: [{ id: user.id, name: user.username, score: 0 }],
-      startTime: Date.now()
-    });
-  };
-
-  useEffect(() => {
-    let timer = null;
-    if (gameActive && timeLeft > 0) {
-      timer = setInterval(() => {
-        setTimeLeft((prev) => {
-          if (prev <= 1) {
-            clearInterval(timer);
-            setGameActive(false);
-            triggerHaptic(ImpactStyle.Heavy);
-            confetti({
-              particleCount: 60,
-              spread: 80,
-              origin: { y: 0.5 }
-            });
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-    }
-    return () => clearInterval(timer);
-  }, [gameActive, timeLeft]);
-
-  const handleTargetTap = () => {
-    if (!gameActive) return;
-    triggerHaptic(ImpactStyle.Light);
-    const newScore = tapScore + 1;
-    setTapScore(newScore);
-    setTargetPos({ x: 15 + Math.random() * 70, y: 15 + Math.random() * 70 });
-
-    multiplayerManager.updateGameState({
-      status: 'playing',
-      leaderboard: [{ id: user.id, name: user.username, score: newScore }]
     });
   };
 
@@ -299,86 +235,6 @@ export const HangoutMultiplayerView = () => {
             </div>
           ))}
         </div>
-      </div>
-
-      {/* Real-Time Multiplayer Game Arena Section */}
-      <div 
-        className="card"
-        style={{
-          border: '1px solid rgba(157, 78, 221, 0.4)',
-          background: 'linear-gradient(180deg, rgba(22, 22, 44, 0.8) 0%, rgba(13, 13, 26, 0.95) 100%)',
-          position: 'relative'
-        }}
-      >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <Swords size={20} color="var(--accent-purple)" />
-            <h3 style={{ fontSize: '0.95rem', fontWeight: '800' }}>Live 1v1 Reflex Arena</h3>
-          </div>
-          {!gameActive ? (
-            <button 
-              className="btn btn-primary" 
-              style={{ padding: '0.35rem 0.85rem', fontSize: '0.75rem' }}
-              onClick={startReflexGame}
-            >
-              Start Duel ⚡
-            </button>
-          ) : (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--accent-gold)', fontWeight: '800', fontSize: '0.85rem' }}>
-              <Zap size={16} /> {timeLeft}s Left | Score: {tapScore}
-            </div>
-          )}
-        </div>
-
-        {gameActive ? (
-          <div 
-            style={{
-              height: '180px',
-              background: 'rgba(0, 0, 0, 0.6)',
-              borderRadius: '12px',
-              border: '2px dashed rgba(0, 210, 255, 0.4)',
-              position: 'relative',
-              overflow: 'hidden',
-              cursor: 'pointer'
-            }}
-          >
-            <button
-              onClick={handleTargetTap}
-              style={{
-                position: 'absolute',
-                top: `${targetPos.y}%`,
-                left: `${targetPos.x}%`,
-                transform: 'translate(-50%, -50%)',
-                width: '46px',
-                height: '46px',
-                borderRadius: '50%',
-                background: 'var(--gradient-badge)',
-                border: 'none',
-                boxShadow: '0 0 15px #ffd60a',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: '#000',
-                fontWeight: '900',
-                fontSize: '1.2rem',
-                transition: 'all 0.08s ease'
-              }}
-            >
-              ⚡
-            </button>
-            <div style={{ position: 'absolute', bottom: '8px', left: '12px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-              Tap the glowing orb as fast as you can!
-            </div>
-          </div>
-        ) : (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem', background: 'rgba(0,0,0,0.3)', borderRadius: '10px' }}>
-            <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-              Challenge online lobby players to instant real-time reflex speed tests!
-            </span>
-            <Trophy size={20} color="var(--accent-gold)" />
-          </div>
-        )}
       </div>
 
       {/* Real-Time Live Room Chat & Reactions */}
