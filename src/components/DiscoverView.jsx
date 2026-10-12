@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Search, UserPlus, UserCheck, Flame } from 'lucide-react';
 import { useAuth } from '../lib/AuthContext';
 import { pb, getDatabase } from '../lib/pocketbase';
+import { formatCount } from '../lib/formatters';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import confetti from 'canvas-confetti';
 
@@ -219,7 +220,7 @@ export const DiscoverView = ({ onSelectPlayer }) => {
 
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem', color: 'var(--text-muted)', borderTop: 'var(--border-subtle)', paddingTop: '0.5rem' }}>
                   <span>{player.fortnite_username ? `IGN: ${player.fortnite_username}` : 'Gamer'}</span>
-                  <span>{player.follower_count ? (player.follower_count >= 1000 ? `${(player.follower_count / 1000).toFixed(1)}K` : player.follower_count) : 0} Followers</span>
+                  <span>{formatCount(player.follower_count)} Followers</span>
                 </div>
               </div>
             );

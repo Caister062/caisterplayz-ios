@@ -7,6 +7,7 @@ import {
 import { useAuth } from '../lib/AuthContext';
 import { pb, getDatabase } from '../lib/pocketbase';
 import { uploadMediaToPocketBase } from '../lib/storage';
+import { formatCount } from '../lib/formatters';
 import { PostCard } from './PostCard';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import confetti from 'canvas-confetti';
@@ -389,7 +390,7 @@ export const ProfileView = ({ onOpenSettings, userPosts = [], onDeletePost }) =>
           >
             <div>
               <div style={{ fontWeight: '900', fontSize: '1.05rem', color: 'var(--text-primary)' }}>
-                {userPosts.length}
+                {formatCount(userPosts.length)}
               </div>
               <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                 Posts
@@ -398,7 +399,7 @@ export const ProfileView = ({ onOpenSettings, userPosts = [], onDeletePost }) =>
 
             <div>
               <div style={{ fontWeight: '900', fontSize: '1.05rem', color: 'var(--accent-cyan)' }}>
-                {stats.followers >= 1000 ? (stats.followers / 1000).toFixed(1) + 'K' : stats.followers}
+                {formatCount(stats.followers)}
               </div>
               <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                 Followers
@@ -407,7 +408,7 @@ export const ProfileView = ({ onOpenSettings, userPosts = [], onDeletePost }) =>
 
             <div>
               <div style={{ fontWeight: '900', fontSize: '1.05rem', color: 'var(--text-primary)' }}>
-                {stats.following}
+                {formatCount(stats.following)}
               </div>
               <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                 Following
@@ -416,7 +417,7 @@ export const ProfileView = ({ onOpenSettings, userPosts = [], onDeletePost }) =>
 
             <div>
               <div style={{ fontWeight: '900', fontSize: '1.05rem', color: 'var(--accent-gold)' }}>
-                {earnedBadges.length}
+                {formatCount(earnedBadges.length)}
               </div>
               <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                 Badges

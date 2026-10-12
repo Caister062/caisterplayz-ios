@@ -3,6 +3,7 @@ import { Heart, MessageCircle, Share2, MoreHorizontal, Flag, UserX, Trash2 } fro
 import { useAuth } from '../lib/AuthContext';
 import { pb, getDatabase } from '../lib/pocketbase';
 import { ReportModal } from './ReportModal';
+import { formatCount } from '../lib/formatters';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { Share } from '@capacitor/share';
 import confetti from 'canvas-confetti';
@@ -324,7 +325,7 @@ export const PostCard = ({ post, onLikeToggle, onDelete, onBlockUser }) => {
             aria-label="Like post"
           >
             <Heart size={20} fill={isLiked ? 'currentColor' : 'none'} />
-            <span>{likeCount}</span>
+            <span>{formatCount(likeCount)}</span>
           </button>
 
           <button
@@ -333,7 +334,7 @@ export const PostCard = ({ post, onLikeToggle, onDelete, onBlockUser }) => {
             aria-label="Comments"
           >
             <MessageCircle size={20} />
-            <span>{commentCount}</span>
+            <span>{formatCount(commentCount)}</span>
           </button>
 
           <button className="feed-action-btn" onClick={handleShare} aria-label="Share">
