@@ -218,7 +218,7 @@ export const SettingsSafetyModal = ({ isOpen, onClose, onOpenEULA, onOpenPrivacy
                   <button
                     className="btn btn-secondary"
                     style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem', minHeight: '36px' }}
-                    onClick={() => onUnblock(b.id)}
+                    onClick={() => onUnblock(b.blocked || b.id)}
                   >
                     Unblock
                   </button>

@@ -109,13 +109,24 @@ function App() {
     }
   };
 
-  const handleUnblockUser = async (userId) => {
-    if (!user?.id) return;
-    setBlockedUsers((prev) => prev.filter((b) => b.blocked !== userId));
+  const handleUnblockUser = async (targetId) => {
+    if (!user?.id || !targetId) return;
+    
+    // Find matching block
+    const matchedBlock = blockedUsers.find((b) => b.blocked === targetId || b.id === targetId);
+    const blockedUserId = matchedBlock?.blocked || targetId;
+    const blockRecordId = matchedBlock?.id || `blk_${user.id}_${targetId}`;
+
+    setBlockedUsers((prev) => prev.filter((b) => b.blocked !== blockedUserId && b.id !== targetId));
+    
     try {
       const db = await getDatabase();
-      await db.delete('blocks', `blk_${user.id}_${userId}`);
-    } catch (e) {}
+      await db.delete('blocks', blockRecordId);
+      // Fallback cleanup if stored under custom key
+      await db.delete('blocks', `blk_${user.id}_${blockedUserId}`);
+    } catch (e) {
+      console.warn('Error deleting block from db:', e);
+    }
   };
 
   const switchTab = (tab) => {
