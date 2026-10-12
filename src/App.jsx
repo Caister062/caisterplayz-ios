@@ -8,8 +8,10 @@ import { DiscoverView } from './components/DiscoverView';
 import { ProfileView } from './components/ProfileView';
 import { DirectMessagesView } from './components/DirectMessagesView';
 import { HangoutMultiplayerView } from './components/HangoutMultiplayerView';
+import { NotificationsView } from './components/NotificationsView';
 import { SettingsSafetyModal } from './components/SettingsSafetyModal';
 import { AuthScreen } from './components/AuthScreen';
+import { notificationService } from './lib/notifications';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import './index.css';
 
@@ -56,12 +58,18 @@ function App() {
         if (blocks) {
           setBlockedUsers(blocks.filter((b) => b.blocker === user.id));
         }
-
-        const notifs = await db.getAllFromIndex('notifications', 'recipient', user.id);
-        if (notifs) {
-          setNotifications(notifs);
-        }
       });
+
+      // Initialize real-time notification engine
+      notificationService.init(user.id);
+      const unsubNotifs = notificationService.subscribe((list) => {
+        setNotifications(list);
+      });
+
+      return () => {
+        unsubNotifs();
+        notificationService.cleanup();
+      };
     }
   }, [user?.id]);
 
@@ -201,7 +209,30 @@ function App() {
           <span className="tag">13+ GAMING</span>
         </div>
 
-        <div className="header-actions">
+        <div className="header-actions" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+          <button
+            className="icon-btn"
+            style={{ position: 'relative' }}
+            onClick={() => switchTab(activeTab === 'notifications' ? 'feed' : 'notifications')}
+            aria-label="Notifications"
+          >
+            <Bell size={19} color={activeTab === 'notifications' ? 'var(--accent-cyan)' : 'currentColor'} />
+            {notifications.filter((n) => !n.read).length > 0 && (
+              <span
+                style={{
+                  position: 'absolute',
+                  top: '4px',
+                  right: '4px',
+                  width: '9px',
+                  height: '9px',
+                  borderRadius: '50%',
+                  background: 'var(--accent-cyan)',
+                  boxShadow: '0 0 6px var(--accent-cyan)',
+                }}
+              />
+            )}
+          </button>
+
           <button
             className="icon-btn"
             onClick={() => switchTab(activeTab === 'dms' ? 'feed' : 'dms')}
@@ -268,35 +299,16 @@ function App() {
       )}
 
       {activeTab === 'notifications' && (
-        <main className="main-content animate-fade">
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-            <h2 style={{ fontSize: '1.15rem', fontWeight: '800', marginBottom: '0.25rem' }}>Activity</h2>
-            {notifications.length === 0 ? (
-              <div className="card" style={{ textAlign: 'center', padding: '2.5rem 1rem', color: 'var(--text-muted)' }}>
-                <Bell size={32} style={{ margin: '0 auto 0.5rem', opacity: 0.5 }} />
-                <p>No new activity. Interacting with posts and players will trigger real alerts.</p>
-              </div>
-            ) : (
-              notifications.map((n) => (
-                <div key={n.id} className="card" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                  <img
-                    src={n.actor_avatar || `https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${n.actor_id}`}
-                    alt=""
-                    className="avatar sm"
-                  />
-                  <div>
-                    <p style={{ fontSize: '0.85rem' }}>
-                      <strong>{n.actor_name || 'A player'}</strong> {n.type === 'like' && 'liked your post.'}{n.type === 'comment' && 'commented on your post.'}{n.type === 'follow' && 'started following you.'}
-                    </p>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                      {new Date(n.created).toLocaleDateString([], { month: 'short', day: 'numeric' })}
-                    </span>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </main>
+        <NotificationsView
+          notifications={notifications}
+          onSelectNotification={(n) => {
+            if (n.post_id) {
+              setActiveTab('feed');
+            } else if (n.type === 'follow') {
+              setActiveTab('discover');
+            }
+          }}
+        />
       )}
 
       <nav className="bottom-tab-bar" aria-label="Main Navigation">

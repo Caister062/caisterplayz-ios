@@ -3,6 +3,7 @@ import { Search, UserPlus, UserCheck, Flame } from 'lucide-react';
 import { useAuth } from '../lib/AuthContext';
 import { pb, getDatabase } from '../lib/pocketbase';
 import { formatCount } from '../lib/formatters';
+import { notificationService } from '../lib/notifications';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import confetti from 'canvas-confetti';
 
@@ -84,14 +85,12 @@ export const DiscoverView = ({ onSelectPlayer }) => {
         });
 
         // Record real notification for the followed user
-        await db.put('notifications', {
-          id: `notif_fol_${Date.now()}_${user.id}`,
+        await notificationService.sendNotification({
           recipient: playerId,
           type: 'follow',
           actor_id: user.id,
           actor_name: user.name || user.username || 'A player',
           actor_avatar: user.avatar_url || '',
-          created: new Date().toISOString(),
         });
 
         // Update target player follower count

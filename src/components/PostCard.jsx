@@ -4,6 +4,7 @@ import { useAuth } from '../lib/AuthContext';
 import { pb, getDatabase } from '../lib/pocketbase';
 import { ReportModal } from './ReportModal';
 import { formatCount } from '../lib/formatters';
+import { notificationService } from '../lib/notifications';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { Share } from '@capacitor/share';
 import confetti from 'canvas-confetti';
@@ -98,14 +99,13 @@ export const PostCard = ({ post, onLikeToggle, onDelete, onBlockUser }) => {
         // Record real notification for the post author if it's someone else
         const postAuthorId = post.user || author.id;
         if (postAuthorId && postAuthorId !== user.id) {
-          await db.put('notifications', {
-            id: `notif_like_${Date.now()}_${user.id}`,
+          await notificationService.sendNotification({
             recipient: postAuthorId,
             type: 'like',
             actor_id: user.id,
             actor_name: user.name || user.username || 'A player',
             actor_avatar: user.avatar_url || '',
-            created: new Date().toISOString(),
+            post_id: post.id,
           });
         }
       } else {
@@ -151,14 +151,14 @@ export const PostCard = ({ post, onLikeToggle, onDelete, onBlockUser }) => {
       // Record real notification for the post author
       const postAuthorId = post.user || author.id;
       if (postAuthorId && postAuthorId !== user.id) {
-        await db.put('notifications', {
-          id: `notif_comm_${Date.now()}_${user.id}`,
+        await notificationService.sendNotification({
           recipient: postAuthorId,
           type: 'comment',
           actor_id: user.id,
           actor_name: user.name || user.username || 'A player',
           actor_avatar: user.avatar_url || '',
-          created: new Date().toISOString(),
+          post_id: post.id,
+          message: content,
         });
       }
 
